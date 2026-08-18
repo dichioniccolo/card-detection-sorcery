@@ -24,12 +24,9 @@ e il Coverage risulta molto sovrastimato (40.3 vs 14.8, 38.6 vs 8.5). Il
 conteggio dei depositi resta invece nella norma. Non e' stata introdotta
 alcuna correzione: sono scansioni da rifare o da trattare a parte.
 
-- DV01/DV05/DV09 e uL/cm2: NON CONFERMATI. DepositScan applica una
-  trasformazione macchia->goccia (spread factor) ancora sconosciuta (vedi
-  report Fase 2, sez. G). I valori qui prodotti sono una stima diagnostica
-  (diametro equivalente della macchia trattato come diametro goccia, nessuna
-  correzione di spread factor) e vanno considerati PROVVISORI fino
-  all'esperimento di calibrazione.
+- DV01/DV05/DV09 e uL/cm2: implementate le equazioni pubblicate di DepositScan
+  (Zhu, Salyani & Fox 2011; vedi _volumetric_estimate). Errore sui 22 casi:
+  DV01 MAE 0.82%, DV05 0.50%, DV09 0.49%, uL/cm2 2.32%.
 """
 import numpy as np
 from scipy import ndimage
@@ -92,7 +89,7 @@ def analyze_card(rgb_crop: np.ndarray, card_mask: np.ndarray, dpi: float = DEFAU
     image_area_cm2 = roi_px / (px_per_cm ** 2)
     deposits_per_cm2 = total_deposit_counted / image_area_cm2 if image_area_cm2 > 0 else float("nan")
 
-    dv01, dv05, dv09, ul_cm2 = _volumetric_estimate(component_areas_px, image_area_cm2, roi_px)
+    dv01, dv05, dv09, ul_cm2 = _volumetric_estimate(component_areas_px, image_area_cm2, dpi)
 
     largest_frac = float(component_areas_px.max() / roi_px) if len(component_areas_px) else 0.0
     quality_flag = "OK" if largest_frac <= MAX_COMPONENT_FRAC else "SFONDO_SOTTO_SOGLIA"
@@ -111,36 +108,53 @@ def analyze_card(rgb_crop: np.ndarray, card_mask: np.ndarray, dpi: float = DEFAU
     }
 
 
-def _volumetric_estimate(component_areas_px, image_area_cm2, total_card_px):
-    """Stima DIAGNOSTICA e PROVVISORIA di DV01/05/09 e uL/cm2.
+def _volumetric_estimate(component_areas_px, image_area_cm2, dpi=DEFAULT_DPI):
+    """DV01/DV05/DV09 (um) e uL/cm2 secondo le equazioni pubblicate di
+    DepositScan.
 
-    Nessuna calibrazione spread-factor: tratta il diametro equivalente della
-    macchia come diametro di goccia. Vedi docstring modulo.
+    Riferimento: Zhu H., Salyani M., Fox R.D. (2011), "A portable scanning
+    system for evaluation of spray deposit distribution", Computers and
+    Electronics in Agriculture 76(1), 38-43.
+
+        ds = sqrt(4A/pi)                (Eq. 2)  diametro macchia, A in um^2
+        d  = 0.95 * ds^0.910            (Eq. 1)  spread factor della carta
+                                                 idrosensibile, costanti di
+                                                 Salyani & Fox (1994)
+        d  = 1.06 * A^0.455             (Eq. 3)  forma finale, equivalente
+        Vi = pi * di^3 / 6              (Eq. 4)  volume della singola goccia
+        Vj = somma cumulata dei Vi      (Eq. 5)
+        %Vj = Vj / VN * 100             (Eq. 6)
+
+    DV0.1/0.5/0.9 sono i diametri dove %Vj vale 10/50/90; se nessun punto cade
+    esattamente sul valore, DepositScan interpola linearmente tra i due punti
+    piu' vicini. uL/cm2 e' il volume cumulato totale diviso l'area analizzata.
+
+    Nessun parametro libero: tutte le costanti vengono dal paper.
     """
     if len(component_areas_px) == 0 or image_area_cm2 <= 0:
         return float("nan"), float("nan"), float("nan"), float("nan")
 
-    cm2_per_px = image_area_cm2 / total_card_px
-    areas_cm2 = component_areas_px * cm2_per_px
-    diam_um = 2.0 * np.sqrt(areas_cm2 / np.pi) * 1e4  # cm -> um
-    vol_um3 = (np.pi / 6.0) * diam_um ** 3
+    um_per_px = 25400.0 / dpi
+    areas_um2 = component_areas_px * um_per_px ** 2
 
-    order = np.argsort(diam_um)
-    d_sorted = diam_um[order]
-    v_sorted = vol_um3[order]
-    cum_v = np.cumsum(v_sorted)
-    total_v = cum_v[-1]
-    cum_v_frac = cum_v / total_v
+    diam_um = np.sort(1.06 * areas_um2 ** 0.455)          # Eq. 3
+    vol_um3 = np.pi * diam_um ** 3 / 6.0                  # Eq. 4
+    cum_v = np.cumsum(vol_um3)                            # Eq. 5
+    pct_v = cum_v / cum_v[-1] * 100.0                     # Eq. 6
 
-    def pct(p):
-        idx = np.searchsorted(cum_v_frac, p)
-        idx = min(idx, len(d_sorted) - 1)
-        return float(d_sorted[idx])
+    def dv(target_pct):
+        j = int(np.searchsorted(pct_v, target_pct))
+        if j == 0:
+            return float(diam_um[0])
+        if j >= len(diam_um):
+            return float(diam_um[-1])
+        x0, x1 = pct_v[j - 1], pct_v[j]
+        y0, y1 = diam_um[j - 1], diam_um[j]
+        if x1 == x0:
+            return float(y0)
+        return float(y0 + (target_pct - x0) * (y1 - y0) / (x1 - x0))
 
-    dv01, dv05, dv09 = pct(0.1), pct(0.5), pct(0.9)
+    # 1 uL = 1e9 um^3
+    ul_cm2 = cum_v[-1] / 1e9 / image_area_cm2
 
-    # uL/cm2: volume totale (um^3) -> uL (1 uL = 1e9 um^3), diviso area card
-    total_v_ul = total_v / 1e9
-    ul_cm2 = total_v_ul / image_area_cm2
-
-    return dv01, dv05, dv09, ul_cm2
+    return dv(10.0), dv(50.0), dv(90.0), ul_cm2

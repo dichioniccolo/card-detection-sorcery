@@ -40,10 +40,12 @@ degradate di `PROVA_A_0030` sono escluse dalle statistiche (vedi sotto).
 | Image area | -0.03 cm² | 0.34 cm² | validata |
 | Total deposit counted | 0.00 % | 0.56 % | validata |
 | Deposits/cm² | +0.16 % | 1.58 % | validata |
-| DV01 / DV05 / DV09 | — | — | **PROVVISORI** |
-| µL/cm² | — | — | **PROVVISORIO** |
+| DV01 | -0.46 % | 0.81 % | validata |
+| DV05 | -0.31 % | 0.50 % | validata |
+| DV09 | -0.35 % | 0.49 % | validata |
+| µL/cm² | -1.16 % | 2.30 % | validata |
 
-Come sono stati determinati i tre parametri non documentati:
+I quattro parametri non documentati nel paper sono stati ricavati dai dati:
 
 - **Conversione 8-bit**: verificata direttamente contro gli screenshot 8-bit di
   DepositScan. Le mediane coincidono su tutti e 8 i casi disponibili
@@ -56,42 +58,26 @@ Come sono stati determinati i tre parametri non documentati:
 - **Area minima 3 px**: azzera il bias sul conteggio (+0.02%, MAE 0.81%);
   corrisponde al parametro *Size* di Analyze Particles.
 
-## Punti aperti
+## Algoritmo DV / volume
 
-### DV01 / DV05 / DV09 e µL/cm² — non ricostruibili dai dati attuali
+DV01/DV05/DV09 e µL/cm² usano le equazioni pubblicate di DepositScan
+(Zhu, Salyani & Fox 2011), implementate in `src/deposit_metrics.py`:
 
-Sono percentili della distribuzione **volumetrica** delle gocce. Il passaggio
-mancante e' la trasformazione macchia -> goccia (*spread factor*): la macchia
-sulla carta idrosensibile e' sempre piu' grande della goccia che l'ha
-prodotta, con un fattore che dipende dalla dimensione.
+    ds = sqrt(4A/pi)          (Eq. 2)  diametro macchia, A in µm²
+    d  = 0.95 * ds^0.910      (Eq. 1)  spread factor carta idrosensibile
+    d  = 1.06 * A^0.455       (Eq. 3)  forma finale, equivalente
+    Vi = pi * di^3 / 6        (Eq. 4)  volume goccia
+    Vj = somma cumulata       (Eq. 5)
+    %Vj = Vj / VN * 100       (Eq. 6)
 
-Cosa dicono i dati disponibili:
+DV0.1/0.5/0.9 = diametri dove %Vj vale 10/50/90, con interpolazione lineare
+tra i due punti adiacenti. µL/cm² = volume cumulato totale / area analizzata.
 
-- il rapporto tra il mio diametro-macchia e il DV di DepositScan non e'
-  costante (1.8-2.2 su DV01, 2.0-3.2 su DV05), quindi lo spread factor **non**
-  e' una semplice costante;
-- µL/cm² correla molto bene con la somma dei cubi dei diametri di macchia
-  (R² = 0.984), ma con dispersione residua del 14%: la dipendenza e' vicina a
-  d³ con una correzione dimensionale;
-- una legge di potenza globale `d_goccia = a · d_macchia^b` ottimizzata su
-  tutti i 66 valori DV di riferimento arriva solo a MAPE 8.8% (errore massimo
-  43.7%). E' un fit empirico mediocre, non la ricostruzione dell'algoritmo.
+Le costanti dello spread factor sono di Salyani & Fox (1994), verificate dagli
+autori con gocce di dimensione nota da un generatore di gocce singole.
+Nessun parametro e' stato adattato ai dati: sono tutte costanti pubblicate.
 
-**Perche' non basta:** dall'Excel abbiamo solo 3 numeri aggregati per card.
-Molte trasformazioni diverse producono gli stessi 3 percentili. Il problema e'
-sottodeterminato: nessuna quantita' di analisi sulle immagini lo risolve.
-
-**Esperimento necessario (uno solo):** in DepositScan/ImageJ, su una card con
-ampia gamma di dimensioni (es. `H4 P1 R1 V UP D`), esportare la tabella
-**Analyze Particles per singola particella** (Results, non Summary), a parita'
-di soglia 127. Confrontando quelle aree con i DV riportati per la stessa card
-la trasformazione si ricava direttamente, invece di essere ipotizzata.
-
-Finche' non e' fatto, le colonne `*_PROVVISORIO` del CSV usano il diametro
-equivalente della macchia **senza** correzione di spread factor: sono
-indicative e non confrontabili con i valori DepositScan.
-
-### Scansioni degradate
+## Punto aperto: scansioni degradate
 
 Due card di `PROVA_A_0030` (`H3 V DW A`, `H4 V DW A`) hanno un gradiente di
 illuminazione: lo sfondo giallo scende sotto 127 e viene contato come

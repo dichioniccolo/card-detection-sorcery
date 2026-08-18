@@ -1,5 +1,4 @@
 import csv
-import sys
 
 import numpy as np
 from PIL import Image
@@ -22,35 +21,17 @@ CSV_FIELDS = [
     "Image area",
     "Total deposit counted",
     "Deposits/cm2",
-    # Le due colonne seguenti sono PROVVISORIE: dipendono dalla trasformazione
-    # macchia->goccia di DepositScan, non ancora determinata (vedi README).
-    "DV01_PROVVISORIO",
-    "DV05_PROVVISORIO",
-    "DV09_PROVVISORIO",
-    "uL/cm2_PROVVISORIO",
+    "DV01",
+    "DV05",
+    "DV09",
+    "uL/cm2",
     "quality_flag",
     "label_ok",
     "label_raw_text",
 ]
 
-_WARNED = False
-
-
-def _warn_provisional():
-    global _WARNED
-    if not _WARNED:
-        print(
-            "ATTENZIONE: DV01/DV05/DV09 e uL/cm2 sono stime PROVVISORIE "
-            "(nessuna calibrazione spread-factor macchia->goccia, vedi "
-            "report Fase 2 sez. G/H). Non considerarle equivalenti ai "
-            "valori DepositScan finche' non validate sperimentalmente.",
-            file=sys.stderr,
-        )
-        _WARNED = True
-
 
 def process_sheet(image_path: str, dpi: float = DEFAULT_DPI) -> list:
-    _warn_provisional()
     image = Image.open(image_path)
     cells = locate_cells(image_path)
 
@@ -77,10 +58,10 @@ def process_sheet(image_path: str, dpi: float = DEFAULT_DPI) -> list:
             "Image area": round(metrics["image_area_cm2"], 2),
             "Total deposit counted": metrics["total_deposit_counted"],
             "Deposits/cm2": round(metrics["deposits_per_cm2"], 1),
-            "DV01_PROVVISORIO": round(metrics["dv01_um"], 1),
-            "DV05_PROVVISORIO": round(metrics["dv05_um"], 1),
-            "DV09_PROVVISORIO": round(metrics["dv09_um"], 1),
-            "uL/cm2_PROVVISORIO": round(metrics["ul_cm2"], 3),
+            "DV01": round(metrics["dv01_um"], 1),
+            "DV05": round(metrics["dv05_um"], 1),
+            "DV09": round(metrics["dv09_um"], 1),
+            "uL/cm2": round(metrics["ul_cm2"], 3),
             "quality_flag": metrics["quality_flag"],
             "label_ok": label["ok"],
             "label_raw_text": label["raw_text"],

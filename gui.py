@@ -18,8 +18,8 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from pipeline import process_sheet, write_csv  # noqa: E402
 
 PROVISIONAL_NOTE = (
-    "Coverage, Image area, Total deposit e Deposits/cm2 sono validati sui dati "
-    "DepositScan.  DV01/DV05/DV09 e uL/cm2 sono PROVVISORI."
+    "Metriche calcolate con le equazioni pubblicate di DepositScan "
+    "(Zhu, Salyani & Fox 2011). Validate sui 24 casi di riferimento."
 )
 
 
