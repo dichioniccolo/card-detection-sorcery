@@ -2,10 +2,12 @@
 """GUI: seleziona uno o piu' JPG di fogli A4, elabora, esporta CSV nella
 cartella scelta dall'utente.
 """
+import multiprocessing
 import queue
 import subprocess
 import sys
 import threading
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from tkinter import (
     Tk, Frame, Listbox, Scrollbar, Button, Label, Entry, StringVar,
@@ -15,7 +17,8 @@ from tkinter.scrolledtext import ScrolledText
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from pipeline import process_sheet, write_csv  # noqa: E402
+from pipeline import write_csv  # noqa: E402
+from worker import process_one  # noqa: E402
 
 PROVISIONAL_NOTE = (
     "Formule ricavate dal bytecode del plugin DepositScan. DROP SIZE e' il "
@@ -35,6 +38,7 @@ class App:
         self.out_dir = StringVar(value=str(Path.home()))
         self.out_name = StringVar(value="output.csv")
         self.drop_size = StringVar(value="200")
+        self.jobs = StringVar(value=str(multiprocessing.cpu_count() or 1))
         self.status = StringVar(value="Pronto.")
         self.log_queue = queue.Queue()
         self.last_output = None
@@ -47,6 +51,7 @@ class App:
         top = Frame(self.root, padx=10, pady=10)
         top.pack(fill=X)
         Button(top, text="Aggiungi immagini...", command=self.add_images).pack(side=LEFT)
+        Button(top, text="Aggiungi cartella...", command=self.add_folder).pack(side=LEFT, padx=6)
         Button(top, text="Rimuovi selezionate", command=self.remove_selected).pack(side=LEFT, padx=6)
         Button(top, text="Svuota lista", command=self.clear_images).pack(side=LEFT)
 
@@ -68,6 +73,8 @@ class App:
         Entry(out_frame, textvariable=self.out_name, width=30).grid(row=1, column=1, sticky=W, padx=6, pady=(6, 0))
         Label(out_frame, text="DROP SIZE (L/ha):").grid(row=2, column=0, sticky=W, pady=(6, 0))
         Entry(out_frame, textvariable=self.drop_size, width=12).grid(row=2, column=1, sticky=W, padx=6, pady=(6, 0))
+        Label(out_frame, text="Processi paralleli:").grid(row=3, column=0, sticky=W, pady=(6, 0))
+        Entry(out_frame, textvariable=self.jobs, width=12).grid(row=3, column=1, sticky=W, padx=6, pady=(6, 0))
 
         action = Frame(self.root, padx=10, pady=4)
         action.pack(fill=X)
@@ -99,6 +106,22 @@ class App:
                 added += 1
         if added:
             self.status.set(f"{len(self.image_paths)} immagini in lista.")
+
+    def add_folder(self):
+        d = filedialog.askdirectory(title="Scegli la cartella con i JPG")
+        if not d:
+            return
+        found = sorted(
+            str(p) for ext in ("*.jpg", "*.jpeg", "*.JPG", "*.JPEG")
+            for p in Path(d).rglob(ext)
+        )
+        added = 0
+        for p in found:
+            if p not in self.image_paths:
+                self.image_paths.append(p)
+                self.listbox.insert(END, p)
+                added += 1
+        self.status.set(f"{len(self.image_paths)} immagini in lista ({added} aggiunte).")
 
     def remove_selected(self):
         for idx in reversed(self.listbox.curselection()):
@@ -169,6 +192,11 @@ class App:
         except ValueError:
             messagebox.showerror("Valore non valido", "DROP SIZE deve essere un numero (L/ha).")
             return
+        try:
+            self._jobs = max(1, int(self.jobs.get().strip()))
+        except ValueError:
+            messagebox.showerror("Valore non valido", "Processi paralleli deve essere un numero.")
+            return
 
         self.running = True
         self.run_button.config(state="disabled")
@@ -178,35 +206,45 @@ class App:
         ).start()
 
     def _process_worker(self, image_paths, out_path, drop_size):
-        all_rows = []
-        bad_labels = 0
-        bad_quality = 0
-        failed_sheets = []
+        results, failed = {}, []
+        bad_labels = bad_quality = 0
         total = len(image_paths)
         try:
-            for n, image_path in enumerate(image_paths, 1):
-                self.root.after(0, self.status.set, f"Elaborazione {n}/{total}...")
-                self._log(f"[{n}/{total}] {image_path}")
-                try:
-                    rows = process_sheet(image_path, drop_size=drop_size)
-                except Exception as e:
-                    # un foglio illeggibile non deve interrompere il lotto
-                    failed_sheets.append(image_path)
-                    self._log(f"    SALTATO - {e}")
-                    continue
+            jobs = max(1, min(self._jobs, total))
+            tasks = [(p, 600.0, drop_size) for p in image_paths]
+            done = 0
+
+            def handle(path, rows, err):
+                nonlocal done, bad_labels, bad_quality
+                done += 1
+                self.root.after(0, self.status.set, f"Elaborazione {done}/{total}...")
+                if err:
+                    failed.append(path)
+                    self._log(f"[{done}/{total}] {path}  SALTATO - {err}")
+                    return
+                results[path] = rows
+                notes = []
                 for r in rows:
-                    notes = []
                     if not r["label_ok"]:
-                        notes.append(f"ETICHETTA NON LETTA ({r['label_raw_text']!r})")
+                        notes.append(f"card {r['card_index']} etichetta '{r['label_raw_text']}'")
                         bad_labels += 1
                     if r["quality_flag"] != "OK":
-                        notes.append("SCANSIONE DEGRADATA: sfondo sotto soglia, "
-                                     "Coverage inaffidabile")
+                        notes.append(f"card {r['card_index']} scansione degradata")
                         bad_quality += 1
-                    suffix = "  <-- " + "; ".join(notes) if notes else ""
-                    self._log(f"    card {r['card_index']}: {r['label_raw_text']}{suffix}")
-                all_rows.extend(rows)
+                suffix = "  <-- " + "; ".join(notes) if notes else ""
+                self._log(f"[{done}/{total}] {Path(path).name}{suffix}")
 
+            if jobs == 1:
+                for t in tasks:
+                    handle(*process_one(t))
+            else:
+                with ProcessPoolExecutor(max_workers=jobs) as pool:
+                    futures = [pool.submit(process_one, t) for t in tasks]
+                    for fut in as_completed(futures):
+                        handle(*fut.result())
+
+            # ordine di output stabile: come in lista, non come finiscono
+            all_rows = [r for p in image_paths for r in results.get(p, [])]
             if not all_rows:
                 raise RuntimeError("Nessuna card elaborata: controlla i file di input.")
 
@@ -218,8 +256,8 @@ class App:
                 summary.append(f"{bad_labels} etichette non riconosciute (da verificare a mano)")
             if bad_quality:
                 summary.append(f"{bad_quality} card con scansione degradata")
-            if failed_sheets:
-                summary.append(f"{len(failed_sheets)} fogli saltati")
+            if failed:
+                summary.append(f"{len(failed)} fogli saltati")
             self._log("Fatto. " + " | ".join(summary))
             self.root.after(0, self.status.set, f"Completato: {len(all_rows)} righe.")
             self.root.after(0, self.open_button.config, {"state": "normal"})
@@ -240,4 +278,5 @@ def main():
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()  # necessario per l'eseguibile Windows
     main()

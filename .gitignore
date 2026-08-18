@@ -4,3 +4,7 @@ depositscan/
 __pycache__/
 *.py[cod]
 venv/
+build/
+dist/
+build-venv/
+*.spec.bak

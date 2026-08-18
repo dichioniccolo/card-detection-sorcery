@@ -11,19 +11,26 @@ GUI:
 venv/bin/python3 gui.py
 ```
 
-Riga di comando:
+Riga di comando (`-j` = processi paralleli, default: numero di CPU):
 
 ```bash
-venv/bin/python3 main.py assets/PROVA_A_0027.jpg [altri.jpg ...] -o output.csv
+venv/bin/python3 main.py assets/*.jpg -o output.csv -j 8
 ```
 
-Richiede `tesseract-ocr` installato a livello di sistema.
+Nessuna dipendenza esterna oltre ai pacchetti in `requirements.txt`.
+
+### Eseguibile Windows
+
+Su Windows, con Python installato, `build_windows.bat` produce
+`dist\DepositScanReplica.exe`: file singolo, avvia la GUI, condivisibile
+com'e'.
 
 ## Pipeline
 
 1. rilevamento della griglia prestampata (linee della tabella)
 2. individuazione delle 4 card e delle 4 etichette
-3. OCR dell'etichetta, validato contro il pattern `H# P# R# [M|V] [UP|DW] [A-D]`
+3. lettura dell'etichetta per confronto con template di caratteri, vincolata
+   al formato `H# P# R# [M|V] [UP|DW] [A-D]`
 4. conversione 8-bit come ImageJ: media non pesata `(R+G+B)/3`, arrotondata
 5. soglia **inclusiva** a 127: deposito = pixel `<= 127`
 6. componenti connesse (8-connettivita', nessun filtro dimensionale)
@@ -88,6 +95,25 @@ dall'origine: `target * d[0] / pct[0]`.
 La costante `PIXEL_TO_UM = 42.3333` e' cablata nel plugin: DepositScan assume
 sempre 600 dpi. Le costanti dello spread factor sono di Salyani & Fox (1994).
 Nessun parametro e' stato adattato ai dati.
+
+## Lettura delle etichette
+
+Le etichette usano un font monospace fisso e un alfabeto di 15 caratteri, per
+cui il riconoscimento avviene per confronto con template ricavati dai fogli di
+riferimento (`tools/build_label_templates.py` -> `src/label_templates.npz`),
+non con un OCR generico. E' piu' accurato su questo font e non richiede
+dipendenze esterne, cosi' l'eseguibile resta autonomo.
+
+Ogni posizione dell'etichetta e' vincolata ai soli caratteri ammessi dal
+formato, il che elimina le confusioni fra glifi simili; la direzione (`UP` /
+`DW`) e' decisa sulla coppia, non carattere per carattere. Sui 24 casi di
+riferimento: 24/24 corrette, identiche a quanto leggeva Tesseract.
+
+**Limite noto:** i template coprono solo le cifre presenti nei fogli di
+riferimento (1-4). Un'etichetta che contenga 0 o 5-9 verrebbe ricondotta alla
+cifra piu' somigliante fra quelle note, senza segnalazione. Per estendere:
+aggiungere a `tools/build_label_templates.py` un foglio che contenga le cifre
+mancanti e rigenerare il file dei template.
 
 ## Punto aperto: scansioni degradate
 
