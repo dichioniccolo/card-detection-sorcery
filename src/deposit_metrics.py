@@ -62,8 +62,12 @@ def analyze_card(rgb_crop: np.ndarray, card_mask: np.ndarray, dpi: float = DEFAU
     top, bot = int(ys.min()), int(ys.max()) + 1
     left, right = int(xs.min()), int(xs.max()) + 1
 
+    # Soglia INCLUSIVA: in ImageJ l'intervallo di threshold comprende
+    # l'estremo, quindi il livello 127 e' deposito. Usare "< 127" scarta un
+    # livello e produce un sottoconteggio sistematico (verificato sui 22 casi:
+    # bias sul conteggio -1.4% con "< 127", 0.00% con "<= 127").
     gray = to_gray(rgb_crop)[top:bot, left:right]
-    deposit_mask = gray < 127
+    deposit_mask = gray <= 127
 
     roi_px = deposit_mask.size
     deposit_px = int(deposit_mask.sum())
