@@ -1,4 +1,5 @@
 output/
+depositscan/
 *.csv
 __pycache__/
 *.py[cod]

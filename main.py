@@ -19,14 +19,18 @@ def main():
     parser.add_argument("images", nargs="+", help="JPG dei fogli A4 da processare")
     parser.add_argument("-o", "--output", default="output.csv", help="file CSV di output")
     parser.add_argument("--dpi", type=float, default=600.0, help="DPI di scansione (default 600)")
+    parser.add_argument("--drop-size", type=int, default=200,
+                        help="volume di applicazione in L/ha, colonna DROP SIZE (default 200)")
     args = parser.parse_args()
 
     all_rows = []
     for image_path in args.images:
         print(f"Elaborazione {image_path} ...", file=sys.stderr)
-        rows = process_sheet(image_path, dpi=args.dpi)
+        rows = process_sheet(image_path, dpi=args.dpi, drop_size=args.drop_size)
         for r in rows:
             status = "OK" if r["label_ok"] else "ETICHETTA NON RICONOSCIUTA"
+            if r["quality_flag"] != "OK":
+                status += " / SCANSIONE DEGRADATA"
             print(f"  card {r['card_index']}: {status} -> {r['label_raw_text']!r}", file=sys.stderr)
         all_rows.extend(rows)
 

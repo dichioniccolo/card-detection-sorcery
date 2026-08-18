@@ -18,8 +18,9 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from pipeline import process_sheet, write_csv  # noqa: E402
 
 PROVISIONAL_NOTE = (
-    "Metriche calcolate con le equazioni pubblicate di DepositScan "
-    "(Zhu, Salyani & Fox 2011). Validate sui 24 casi di riferimento."
+    "Formule ricavate dal bytecode del plugin DepositScan. DROP SIZE e' il "
+    "volume di applicazione (L/ha): metadato del trattamento, non misurato "
+    "dall'immagine."
 )
 
 
@@ -33,6 +34,7 @@ class App:
         self.image_paths = []
         self.out_dir = StringVar(value=str(Path.home()))
         self.out_name = StringVar(value="output.csv")
+        self.drop_size = StringVar(value="200")
         self.status = StringVar(value="Pronto.")
         self.log_queue = queue.Queue()
         self.last_output = None
@@ -64,6 +66,8 @@ class App:
         Button(out_frame, text="Scegli...", command=self.choose_out_dir).grid(row=0, column=2)
         Label(out_frame, text="Nome file CSV:").grid(row=1, column=0, sticky=W, pady=(6, 0))
         Entry(out_frame, textvariable=self.out_name, width=30).grid(row=1, column=1, sticky=W, padx=6, pady=(6, 0))
+        Label(out_frame, text="DROP SIZE (L/ha):").grid(row=2, column=0, sticky=W, pady=(6, 0))
+        Entry(out_frame, textvariable=self.drop_size, width=12).grid(row=2, column=1, sticky=W, padx=6, pady=(6, 0))
 
         action = Frame(self.root, padx=10, pady=4)
         action.pack(fill=X)
@@ -160,13 +164,20 @@ class App:
         ):
             return
 
+        try:
+            drop_size = int(self.drop_size.get().strip())
+        except ValueError:
+            messagebox.showerror("Valore non valido", "DROP SIZE deve essere un numero (L/ha).")
+            return
+
         self.running = True
         self.run_button.config(state="disabled")
         threading.Thread(
-            target=self._process_worker, args=(list(self.image_paths), out_path), daemon=True
+            target=self._process_worker,
+            args=(list(self.image_paths), out_path, drop_size), daemon=True
         ).start()
 
-    def _process_worker(self, image_paths, out_path):
+    def _process_worker(self, image_paths, out_path, drop_size):
         all_rows = []
         bad_labels = 0
         bad_quality = 0
@@ -177,7 +188,7 @@ class App:
                 self.root.after(0, self.status.set, f"Elaborazione {n}/{total}...")
                 self._log(f"[{n}/{total}] {image_path}")
                 try:
-                    rows = process_sheet(image_path)
+                    rows = process_sheet(image_path, drop_size=drop_size)
                 except Exception as e:
                     # un foglio illeggibile non deve interrompere il lotto
                     failed_sheets.append(image_path)

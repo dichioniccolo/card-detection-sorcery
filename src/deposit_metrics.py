@@ -1,97 +1,105 @@
 """Calcolo metriche di deposito su una singola card.
 
-Pipeline: RGB card -> 8-bit media non pesata (R+G+B)/3 -> threshold 127
-(deposito = pixel < 127) -> componenti connesse (8-connettivita', area >= 3 px)
--> metriche, calcolate sul RETTANGOLO che contiene la card.
+Le formule sono state ricavate dal BYTECODE del plugin DepositScan
+(`plugins/Java program/`: Water_Paper_Analysis.class, DropResultsFrame.class,
+DropResultsFrame$DropRecord.class), non ipotizzate. Riferimenti al sorgente
+nei commenti qui sotto.
 
-Stato di validazione sui 24 casi di riferimento:
-- Conversione 8-bit: CONFERMATA sul dato reale. Le mediane della mia
-  conversione riproducono quelle degli screenshot 8-bit di DepositScan sugli
-  8 casi disponibili (158/158, 159/159.3, 161/161.3, ...). ImageJ, di cui
-  DepositScan e' una macro, usa la media non pesata dei canali.
-- Image area = area del BOUNDING BOX della card a 600 DPI: CONFERMATA
-  (es. 22.85 vs 22.87, 24.54 vs 24.80, 21.62 vs 21.77 cm2). DepositScan
-  analizza una ROI rettangolare, non la sagoma ritagliata della card.
-- Coverage = pixel deposito / pixel del bounding box: CONFERMATA, errore
-  medio 0.22pp su 22 card (esclusi i 2 casi anomali sotto).
-- MIN_COMPONENT_PX = 3: valore che azzera il bias sul conteggio
-  (+0.02%, MAE 0.81%). Corrisponde al parametro "Size" di Analyze Particles.
-- Deposits/cm2 = Total deposit / Image area: esatta.
+Catena, come nel plugin:
 
-LIMITE NOTO: 2 card di PROVA_A_0030 (H3 V DW A, H4 V DW A) hanno un forte
-gradiente di illuminazione nella scansione; lo sfondo giallo scende sotto 127
-e il Coverage risulta molto sovrastimato (40.3 vs 14.8, 38.6 vs 8.5). Il
-conteggio dei depositi resta invece nella norma. Non e' stata introdotta
-alcuna correzione: sono scansioni da rifare o da trattare a parte.
+    area       = pixelArea * 42.3333 * 42.3333       // px -> um^2
+    ds         = sqrt(1.2732395447351628 * area)     // = sqrt(4A/pi)
+    actualSize = 0.95 * pow(ds, 0.91)                // spread factor
+    volume     = pi * pow(actualSize, 3.0) / 6.0     // um^3
 
-- DV01/DV05/DV09 e uL/cm2: implementate le equazioni pubblicate di DepositScan
-  (Zhu, Salyani & Fox 2011; vedi _volumetric_estimate). Errore sui 22 casi:
-  DV01 MAE 0.82%, DV05 0.50%, DV09 0.49%, uL/cm2 2.32%.
+Pubblicate anche in Zhu H., Salyani M., Fox R.D. (2011), "A portable scanning
+system for evaluation of spray deposit distribution", Computers and
+Electronics in Agriculture 76(1), 38-43; costanti dello spread factor da
+Salyani & Fox (1994).
 """
 import numpy as np
 from scipy import ndimage
 
-MIN_COMPONENT_PX = 3
 DEFAULT_DPI = 600.0
 
-# Controllo qualita': se un singolo oggetto occupa piu' di questa frazione
-# della ROI, non e' un deposito ma sfondo collassato sotto la soglia (tipico
-# di scansioni con gradiente di illuminazione). Sui 24 casi di riferimento il
-# criterio separa nettamente: card degradate 25.8-27.8%, la piu' alta tra
-# quelle valide 4.5%.
+# DropResultsFrame.PIXEL_TO_UM: costante 42.3333, cablata nel plugin.
+# Corrisponde a 25400/600, quindi DepositScan assume sempre 600 dpi.
+PIXEL_TO_UM_AT_600DPI = 42.3333
+
+# DropRecord.<init>: ldc2_w 1.2732395447351628 == 4/pi
+FOUR_OVER_PI = 1.2732395447351628
+
+# DropRecord.<init>: actualSize = 0.95 * pow(ds, 0.91)
+SPREAD_A = 0.95
+SPREAD_B = 0.91
+
+# DropResultsFrame.<init> riga 531/581: i record entrano nell'analisi solo se
+# actualSize > 50.0 um. Non e' un filtro in pixel: a 600 dpi equivale a
+# scartare le particelle di 1-2 px (2 px -> 43.97 um, 3 px -> 52.84 um).
+MIN_ACTUAL_DIAMETER_UM = 50.0
+
+# Controllo qualita' NOSTRO, non di DepositScan: se un singolo oggetto occupa
+# piu' di questa frazione della ROI non e' un deposito ma sfondo collassato
+# sotto la soglia (scansioni con gradiente di illuminazione). Sui 24 casi di
+# riferimento separa nettamente: degradate 25.8-27.8%, la piu' alta tra le
+# valide 4.5%.
 MAX_COMPONENT_FRAC = 0.10
 
 
 def to_gray(rgb: np.ndarray) -> np.ndarray:
-    """Conversione RGB -> 8-bit con media NON pesata dei canali.
+    """Conversione RGB -> 8-bit come ImageJ: media non pesata, arrotondata.
 
-    E' la conversione di default di ImageJ (DepositScan e' una macro ImageJ):
-    ImageJ usa (R+G+B)/3 a meno che non sia attiva l'opzione "weighted RGB
-    conversions". Sulla card gialla la differenza rispetto alla luminanza
-    ITU-R 601 e' molto grande (giallo: media ~168 vs luminanza ~208) e sposta
-    l'esito del threshold 127 in modo determinante.
+    ImageJ usa (r+g+b)/3 arrotondato all'intero piu' vicino, non la luminanza
+    ITU-R 601. Sulla card gialla la differenza e' grande (media ~158 contro
+    luminanza ~205) e cambia completamente l'esito della soglia a 127.
 
-    Verificato direttamente contro gli screenshot 8-bit di DepositScan: le
-    mediane coincidono sugli 8 casi disponibili (vedi docstring del modulo).
+    Verificato contro gli screenshot 8-bit di DepositScan: le mediane
+    coincidono su tutti e 8 i casi disponibili (158/158, 159/159.3, ...).
     """
-    # cast a float PRIMA della somma: su uint8 r+g+b va in overflow (mod 256)
     arr = rgb.astype(np.float64)
-    return (arr[..., 0] + arr[..., 1] + arr[..., 2]) / 3.0
+    return np.floor((arr[..., 0] + arr[..., 1] + arr[..., 2]) / 3.0 + 0.5)
 
 
 def analyze_card(rgb_crop: np.ndarray, card_mask: np.ndarray, dpi: float = DEFAULT_DPI) -> dict:
-    # DepositScan analizza una ROI RETTANGOLARE: tutte le metriche sono
-    # riferite al bounding box della card, non alla sua sagoma ritagliata.
+    # Water_Paper_Analysis.run: ip.crop() sulla ROI, poi soglia e analisi.
+    # DepositScan lavora quindi su un RETTANGOLO, non sulla sagoma della card.
     ys, xs = np.where(card_mask)
     top, bot = int(ys.min()), int(ys.max()) + 1
     left, right = int(xs.min()), int(xs.max()) + 1
 
-    # Soglia INCLUSIVA: in ImageJ l'intervallo di threshold comprende
-    # l'estremo, quindi il livello 127 e' deposito. Usare "< 127" scarta un
-    # livello e produce un sottoconteggio sistematico (verificato sui 22 casi:
-    # bias sul conteggio -1.4% con "< 127", 0.00% con "<= 127").
+    # Soglia inclusiva: in ImageJ l'intervallo di threshold comprende
+    # l'estremo, quindi il livello 127 e' deposito.
     gray = to_gray(rgb_crop)[top:bot, left:right]
     deposit_mask = gray <= 127
 
     roi_px = deposit_mask.size
-    deposit_px = int(deposit_mask.sum())
-    coverage_pct = deposit_px / roi_px * 100.0
+    um_per_px = PIXEL_TO_UM_AT_600DPI * (600.0 / dpi)
+    roi_area_um2 = roi_px * um_per_px ** 2
+    image_area_cm2 = roi_area_um2 / 1e8  # DropResultsFrame: / 100000000.0
 
+    # ParticleAnalyzer(64, 1, rt, 0.0, MAX_VALUE, 0.0, 1.0): nessun filtro di
+    # dimensione o circolarita' a questo stadio, 8-connettivita'.
     lbl, n = ndimage.label(deposit_mask, structure=np.ones((3, 3)))
-    if n > 0:
-        sizes = ndimage.sum(deposit_mask, lbl, index=np.arange(1, n + 1))
-        component_areas_px = sizes[sizes >= MIN_COMPONENT_PX]
+    if n:
+        sizes_px = ndimage.sum(deposit_mask, lbl, index=np.arange(1, n + 1))
     else:
-        component_areas_px = np.array([])
-    total_deposit_counted = int(len(component_areas_px))
+        sizes_px = np.array([])
 
-    px_per_cm = dpi / 2.54
-    image_area_cm2 = roi_px / (px_per_cm ** 2)
-    deposits_per_cm2 = total_deposit_counted / image_area_cm2 if image_area_cm2 > 0 else float("nan")
+    areas_um2 = sizes_px * um_per_px ** 2
+    ds_um = np.sqrt(FOUR_OVER_PI * areas_um2)
+    actual_um = SPREAD_A * ds_um ** SPREAD_B
 
-    dv01, dv05, dv09, ul_cm2 = _volumetric_estimate(component_areas_px, image_area_cm2, dpi)
+    keep = actual_um > MIN_ACTUAL_DIAMETER_UM
+    areas_um2, actual_um = areas_um2[keep], actual_um[keep]
 
-    largest_frac = float(component_areas_px.max() / roi_px) if len(component_areas_px) else 0.0
+    total_deposit_counted = int(actual_um.size)
+    # DropResultsFrame: coverage e conteggio si calcolano sui record TENUTI.
+    coverage_pct = areas_um2.sum() / roi_area_um2 * 100.0 if roi_area_um2 else float("nan")
+    deposits_per_cm2 = total_deposit_counted / image_area_cm2 if image_area_cm2 else float("nan")
+
+    dv01, dv05, dv09, ul_cm2 = _volumetric(actual_um, areas_um2, roi_area_um2)
+
+    largest_frac = float(sizes_px.max() / roi_px) if len(sizes_px) else 0.0
     quality_flag = "OK" if largest_frac <= MAX_COMPONENT_FRAC else "SFONDO_SOTTO_SOGLIA"
 
     return {
@@ -108,53 +116,41 @@ def analyze_card(rgb_crop: np.ndarray, card_mask: np.ndarray, dpi: float = DEFAU
     }
 
 
-def _volumetric_estimate(component_areas_px, image_area_cm2, dpi=DEFAULT_DPI):
-    """DV01/DV05/DV09 (um) e uL/cm2 secondo le equazioni pubblicate di
-    DepositScan.
-
-    Riferimento: Zhu H., Salyani M., Fox R.D. (2011), "A portable scanning
-    system for evaluation of spray deposit distribution", Computers and
-    Electronics in Agriculture 76(1), 38-43.
-
-        ds = sqrt(4A/pi)                (Eq. 2)  diametro macchia, A in um^2
-        d  = 0.95 * ds^0.910            (Eq. 1)  spread factor della carta
-                                                 idrosensibile, costanti di
-                                                 Salyani & Fox (1994)
-        d  = 1.06 * A^0.455             (Eq. 3)  forma finale, equivalente
-        Vi = pi * di^3 / 6              (Eq. 4)  volume della singola goccia
-        Vj = somma cumulata dei Vi      (Eq. 5)
-        %Vj = Vj / VN * 100             (Eq. 6)
-
-    DV0.1/0.5/0.9 sono i diametri dove %Vj vale 10/50/90; se nessun punto cade
-    esattamente sul valore, DepositScan interpola linearmente tra i due punti
-    piu' vicini. uL/cm2 e' il volume cumulato totale diviso l'area analizzata.
-
-    Nessun parametro libero: tutte le costanti vengono dal paper.
-    """
-    if len(component_areas_px) == 0 or image_area_cm2 <= 0:
+def _volumetric(actual_um, areas_um2, roi_area_um2):
+    """DV01/DV05/DV09 (um) e uL/cm2, come DropResultsFrame."""
+    if actual_um.size == 0 or roi_area_um2 <= 0:
         return float("nan"), float("nan"), float("nan"), float("nan")
 
-    um_per_px = 25400.0 / dpi
-    areas_um2 = component_areas_px * um_per_px ** 2
+    # Collections.sort con DropRecord.compareTo: area crescente.
+    order = np.argsort(areas_um2, kind="stable")
+    d = actual_um[order]
 
-    diam_um = np.sort(1.06 * areas_um2 ** 0.455)          # Eq. 3
-    vol_um3 = np.pi * diam_um ** 3 / 6.0                  # Eq. 4
-    cum_v = np.cumsum(vol_um3)                            # Eq. 5
-    pct_v = cum_v / cum_v[-1] * 100.0                     # Eq. 6
+    volume = np.pi * d ** 3 / 6.0          # DropRecord: pi*pow(size,3)/6
+    cumulative = np.cumsum(volume)
+    pct = cumulative / cumulative[-1] * 100.0
 
-    def dv(target_pct):
-        j = int(np.searchsorted(pct_v, target_pct))
-        if j == 0:
-            return float(diam_um[0])
-        if j >= len(diam_um):
-            return float(diam_um[-1])
-        x0, x1 = pct_v[j - 1], pct_v[j]
-        y0, y1 = diam_um[j - 1], diam_um[j]
-        if x1 == x0:
-            return float(y0)
-        return float(y0 + (target_pct - x0) * (y1 - y0) / (x1 - x0))
+    # DropResultsFrame.deposition = totalVolume * 0.1 / roiArea(um^2).
+    # Equivale a (V um^3 / 1e9 uL) / (A um^2 / 1e8 cm^2).
+    ul_cm2 = cumulative[-1] * 0.1 / roi_area_um2
 
-    # 1 uL = 1e9 um^3
-    ul_cm2 = cum_v[-1] / 1e9 / image_area_cm2
+    return _pct_value(d, pct, 10.0), _pct_value(d, pct, 50.0), _pct_value(d, pct, 90.0), ul_cm2
 
-    return dv(10.0), dv(50.0), dv(90.0), ul_cm2
+
+def _pct_value(d, pct, target):
+    """DropResultsFrame.findPCTValue: diametro al percentile di volume."""
+    j = int(np.searchsorted(pct, target))
+
+    # Nessun punto sotto il target: il plugin interpola dall'origine, cioe'
+    # sulla retta (0,0)-(pct[0], d[0]).
+    if j == 0:
+        return float(target * d[0] / pct[0]) if pct[0] else float(d[0])
+
+    if j >= len(d):
+        return float(d[-1])
+
+    x0, x1 = pct[j - 1], pct[j]
+    y0, y1 = d[j - 1], d[j]
+    if x1 == x0:
+        return float(y0)
+    # (d2-d1)/(p2-p1) * (target-p1) + d1
+    return float((y1 - y0) / (x1 - x0) * (target - x0) + y0)

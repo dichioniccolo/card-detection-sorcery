@@ -8,30 +8,34 @@ from card_mask import extract_card
 from label_ocr import read_label
 from deposit_metrics import analyze_card, DEFAULT_DPI
 
+# Volume di applicazione (L/ha) usato nelle prove di riferimento.
+DEFAULT_DROP_SIZE = 200
+
 CSV_FIELDS = [
-    "source_file",
-    "card_index",
-    "Height",
-    "Plant",
-    "Replica",
-    "Side",
-    "Direction",
-    "Test",
-    "Coverage",
-    "Image area",
-    "Total deposit counted",
-    "Deposits/cm2",
+    "HEIGHT",
+    "PLANT",
+    "REPLICA",
+    "SIDE",
+    "DIRECTION",
+    "TEST",
+    "DROP SIZE",
     "DV01",
     "DV05",
     "DV09",
-    "uL/cm2",
+    "COVERAGE",
+    "IMAGE AREA",
+    "TOTAL DEPOSIT",
+    "DROP DENSITY",
+    "µL",
     "quality_flag",
     "label_ok",
     "label_raw_text",
+    "source_file",
+    "card_index",
 ]
 
 
-def process_sheet(image_path: str, dpi: float = DEFAULT_DPI) -> list:
+def process_sheet(image_path: str, dpi: float = DEFAULT_DPI, drop_size=DEFAULT_DROP_SIZE) -> list:
     image = Image.open(image_path)
     cells = locate_cells(image_path)
 
@@ -46,25 +50,28 @@ def process_sheet(image_path: str, dpi: float = DEFAULT_DPI) -> list:
         metrics = analyze_card(card_rgb, card_mask, dpi=dpi)
 
         row = {
-            "source_file": image_path,
-            "card_index": cell.row_index + 1,
-            "Height": label.get("height"),
-            "Plant": label.get("plant"),
-            "Replica": label.get("replica"),
-            "Side": label.get("side"),
-            "Direction": label.get("direction"),
-            "Test": label.get("test"),
-            "Coverage": round(metrics["coverage_pct"], 2),
-            "Image area": round(metrics["image_area_cm2"], 2),
-            "Total deposit counted": metrics["total_deposit_counted"],
-            "Deposits/cm2": round(metrics["deposits_per_cm2"], 1),
+            "HEIGHT": label.get("height"),
+            "PLANT": label.get("plant"),
+            "REPLICA": label.get("replica"),
+            "SIDE": label.get("side"),
+            "DIRECTION": label.get("direction"),
+            "TEST": label.get("test"),
+            # Volume di applicazione del trattamento (L/ha): metadato
+            # sperimentale, non ricavabile dall'immagine.
+            "DROP SIZE": drop_size,
             "DV01": round(metrics["dv01_um"], 1),
             "DV05": round(metrics["dv05_um"], 1),
             "DV09": round(metrics["dv09_um"], 1),
-            "uL/cm2": round(metrics["ul_cm2"], 3),
+            "COVERAGE": round(metrics["coverage_pct"], 2),
+            "IMAGE AREA": round(metrics["image_area_cm2"], 2),
+            "TOTAL DEPOSIT": metrics["total_deposit_counted"],
+            "DROP DENSITY": round(metrics["deposits_per_cm2"], 1),
+            "µL": round(metrics["ul_cm2"], 3),
             "quality_flag": metrics["quality_flag"],
             "label_ok": label["ok"],
             "label_raw_text": label["raw_text"],
+            "source_file": image_path,
+            "card_index": cell.row_index + 1,
         }
         rows.append(row)
 
