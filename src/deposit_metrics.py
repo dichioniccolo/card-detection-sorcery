@@ -37,6 +37,13 @@ from scipy import ndimage
 MIN_COMPONENT_PX = 3
 DEFAULT_DPI = 600.0
 
+# Controllo qualita': se un singolo oggetto occupa piu' di questa frazione
+# della ROI, non e' un deposito ma sfondo collassato sotto la soglia (tipico
+# di scansioni con gradiente di illuminazione). Sui 24 casi di riferimento il
+# criterio separa nettamente: card degradate 25.8-27.8%, la piu' alta tra
+# quelle valide 4.5%.
+MAX_COMPONENT_FRAC = 0.10
+
 
 def to_gray(rgb: np.ndarray) -> np.ndarray:
     """Conversione RGB -> 8-bit con media NON pesata dei canali.
@@ -87,6 +94,9 @@ def analyze_card(rgb_crop: np.ndarray, card_mask: np.ndarray, dpi: float = DEFAU
 
     dv01, dv05, dv09, ul_cm2 = _volumetric_estimate(component_areas_px, image_area_cm2, roi_px)
 
+    largest_frac = float(component_areas_px.max() / roi_px) if len(component_areas_px) else 0.0
+    quality_flag = "OK" if largest_frac <= MAX_COMPONENT_FRAC else "SFONDO_SOTTO_SOGLIA"
+
     return {
         "coverage_pct": coverage_pct,
         "image_area_cm2": image_area_cm2,
@@ -96,6 +106,8 @@ def analyze_card(rgb_crop: np.ndarray, card_mask: np.ndarray, dpi: float = DEFAU
         "dv05_um": dv05,
         "dv09_um": dv09,
         "ul_cm2": ul_cm2,
+        "quality_flag": quality_flag,
+        "largest_component_frac": largest_frac,
     }
 
 
