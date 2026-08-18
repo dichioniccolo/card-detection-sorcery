@@ -1,16 +1,29 @@
 """Calcolo metriche di deposito su una singola card.
 
-Pipeline: RGB card -> 8-bit (luminanza ITU-R 601, standard PIL 'L') ->
-threshold 127 (deposito = pixel scuro, luminanza < 127) -> maschera binaria
--> componenti connesse -> metriche.
+Pipeline: RGB card -> 8-bit media non pesata (R+G+B)/3 -> threshold 127
+(deposito = pixel < 127) -> componenti connesse (8-connettivita', area >= 3 px)
+-> metriche, calcolate sul RETTANGOLO che contiene la card.
 
-Stato di validazione (vedi report Fase 2, sez. C/D/E/F/G/H):
-- Coverage: formula CONFERMATA quantitativamente (errore medio 0.24pp su 8
-  card reali).
-- Total deposit counted: formula base CONFERMATA approssimata (errore medio
-  ~3.5%); il filtro dimensionale minimo esatto di DepositScan resta ignoto,
-  qui si usa un filtro empirico (area >= 2 px) tarato sui casi reali.
-- Deposits/cm2 e Image area: formula base CONFERMATA.
+Stato di validazione sui 24 casi di riferimento:
+- Conversione 8-bit: CONFERMATA sul dato reale. Le mediane della mia
+  conversione riproducono quelle degli screenshot 8-bit di DepositScan sugli
+  8 casi disponibili (158/158, 159/159.3, 161/161.3, ...). ImageJ, di cui
+  DepositScan e' una macro, usa la media non pesata dei canali.
+- Image area = area del BOUNDING BOX della card a 600 DPI: CONFERMATA
+  (es. 22.85 vs 22.87, 24.54 vs 24.80, 21.62 vs 21.77 cm2). DepositScan
+  analizza una ROI rettangolare, non la sagoma ritagliata della card.
+- Coverage = pixel deposito / pixel del bounding box: CONFERMATA, errore
+  medio 0.22pp su 22 card (esclusi i 2 casi anomali sotto).
+- MIN_COMPONENT_PX = 3: valore che azzera il bias sul conteggio
+  (+0.02%, MAE 0.81%). Corrisponde al parametro "Size" di Analyze Particles.
+- Deposits/cm2 = Total deposit / Image area: esatta.
+
+LIMITE NOTO: 2 card di PROVA_A_0030 (H3 V DW A, H4 V DW A) hanno un forte
+gradiente di illuminazione nella scansione; lo sfondo giallo scende sotto 127
+e il Coverage risulta molto sovrastimato (40.3 vs 14.8, 38.6 vs 8.5). Il
+conteggio dei depositi resta invece nella norma. Non e' stata introdotta
+alcuna correzione: sono scansioni da rifare o da trattare a parte.
+
 - DV01/DV05/DV09 e uL/cm2: NON CONFERMATI. DepositScan applica una
   trasformazione macchia->goccia (spread factor) ancora sconosciuta (vedi
   report Fase 2, sez. G). I valori qui prodotti sono una stima diagnostica
@@ -21,37 +34,54 @@ Stato di validazione (vedi report Fase 2, sez. C/D/E/F/G/H):
 import numpy as np
 from scipy import ndimage
 
-MIN_COMPONENT_PX = 2
+MIN_COMPONENT_PX = 3
 DEFAULT_DPI = 600.0
 
 
 def to_gray(rgb: np.ndarray) -> np.ndarray:
-    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
-    return 0.299 * r + 0.587 * g + 0.114 * b
+    """Conversione RGB -> 8-bit con media NON pesata dei canali.
+
+    E' la conversione di default di ImageJ (DepositScan e' una macro ImageJ):
+    ImageJ usa (R+G+B)/3 a meno che non sia attiva l'opzione "weighted RGB
+    conversions". Sulla card gialla la differenza rispetto alla luminanza
+    ITU-R 601 e' molto grande (giallo: media ~168 vs luminanza ~208) e sposta
+    l'esito del threshold 127 in modo determinante.
+
+    Verificato direttamente contro gli screenshot 8-bit di DepositScan: le
+    mediane coincidono sugli 8 casi disponibili (vedi docstring del modulo).
+    """
+    # cast a float PRIMA della somma: su uint8 r+g+b va in overflow (mod 256)
+    arr = rgb.astype(np.float64)
+    return (arr[..., 0] + arr[..., 1] + arr[..., 2]) / 3.0
 
 
 def analyze_card(rgb_crop: np.ndarray, card_mask: np.ndarray, dpi: float = DEFAULT_DPI) -> dict:
-    gray = to_gray(rgb_crop)
-    deposit_mask = (gray < 127) & card_mask
+    # DepositScan analizza una ROI RETTANGOLARE: tutte le metriche sono
+    # riferite al bounding box della card, non alla sua sagoma ritagliata.
+    ys, xs = np.where(card_mask)
+    top, bot = int(ys.min()), int(ys.max()) + 1
+    left, right = int(xs.min()), int(xs.max()) + 1
 
-    total_card_px = int(card_mask.sum())
+    gray = to_gray(rgb_crop)[top:bot, left:right]
+    deposit_mask = gray < 127
+
+    roi_px = deposit_mask.size
     deposit_px = int(deposit_mask.sum())
-    coverage_pct = deposit_px / total_card_px * 100.0
+    coverage_pct = deposit_px / roi_px * 100.0
 
     lbl, n = ndimage.label(deposit_mask, structure=np.ones((3, 3)))
     if n > 0:
         sizes = ndimage.sum(deposit_mask, lbl, index=np.arange(1, n + 1))
-        keep = sizes >= MIN_COMPONENT_PX
-        component_areas_px = sizes[keep]
+        component_areas_px = sizes[sizes >= MIN_COMPONENT_PX]
     else:
         component_areas_px = np.array([])
     total_deposit_counted = int(len(component_areas_px))
 
     px_per_cm = dpi / 2.54
-    image_area_cm2 = total_card_px / (px_per_cm ** 2)
+    image_area_cm2 = roi_px / (px_per_cm ** 2)
     deposits_per_cm2 = total_deposit_counted / image_area_cm2 if image_area_cm2 > 0 else float("nan")
 
-    dv01, dv05, dv09, ul_cm2 = _volumetric_estimate(component_areas_px, image_area_cm2, total_card_px)
+    dv01, dv05, dv09, ul_cm2 = _volumetric_estimate(component_areas_px, image_area_cm2, roi_px)
 
     return {
         "coverage_pct": coverage_pct,
