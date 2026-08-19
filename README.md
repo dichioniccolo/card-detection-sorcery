@@ -17,6 +17,19 @@ Riga di comando (`-j` = processi paralleli, default: numero di CPU):
 venv/bin/python3 main.py assets/*.jpg -o output.csv -j 8
 ```
 
+Un foglio su cui la griglia non viene trovata, o con una card illeggibile,
+viene saltato: il log ne stampa percorso completo e motivo, cosi' si sa cosa
+recuperare a mano. Con `--force` (nella GUI: *Elabora comunque i fogli
+problematici*) il foglio viene ripreso lo stesso:
+
+- la griglia si cerca con un sweep di parametri piu' permissivi, e il log dice
+  quali hanno funzionato;
+- una card illeggibile non fa piu' perdere le altre tre: esce una riga senza
+  metriche, con `quality_flag = CARD_NON_ELABORATA: <motivo>`.
+
+Le righe recuperate cosi' vanno controllate a mano: la griglia trovata con
+parametri diversi puo' ritagliare le card in modo leggermente diverso.
+
 Nessuna dipendenza esterna oltre ai pacchetti in `requirements.txt`.
 
 ### Eseguibile Windows
@@ -122,11 +135,26 @@ illuminazione: lo sfondo giallo scende sotto 127 e viene contato come
 deposito, gonfiando il Coverage (38 contro 15 e 8.5 attesi). Il conteggio dei
 depositi resta invece attendibile.
 
-Il software le rileva da solo: se un singolo oggetto occupa piu' del 10% della
-ROI, la card viene marcata `SFONDO_SOTTO_SOGLIA` nella colonna `quality_flag`.
-Sui 24 casi il criterio separa nettamente (degradate 25.8-27.8%, la piu' alta
-tra le valide 4.5%). Non e' stata applicata alcuna correzione: quelle
-scansioni vanno rifatte.
+Il software le rileva da solo e le marca `SFONDO_SOTTO_SOGLIA` nella colonna
+`quality_flag`. Servono **due** condizioni insieme:
+
+1. `largest_component_frac > 0.10`: un singolo oggetto occupa piu' del 10%
+   della ROI (degradate 26.2-28.2%, la piu' alta tra le valide 4.5%);
+2. `background_floor_gray < 143`: il livello della carta nella zona peggio
+   illuminata scende verso la soglia di 127 (degradate 136-138, la piu' bassa
+   tra le valide 147). Si misura come 5° percentile dei massimi su blocchi di
+   64 px: il massimo locale e' la carta, il percentile ignora i blocchi
+   interamente coperti dal deposito.
+
+La prima condizione da sola non basta: su card molto bagnate le gocce si
+fondono in una macchia unica legittima. `H2P1R1MUPA` ha il 41% di copertura ed
+e' valida. Entrambi i valori finiscono nel CSV, cosi' si vede sempre perche' il
+flag e' scattato — e se scatta troppo spesso, quale delle due condizioni
+regolare (`MAX_COMPONENT_FRAC`, `MIN_BACKGROUND_GRAY` in
+`src/deposit_metrics.py`).
+
+Non e' stata applicata alcuna correzione ai dati: le scansioni degradate vanno
+rifatte.
 
 ## Nota sui metadati
 

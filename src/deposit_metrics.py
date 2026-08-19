@@ -38,12 +38,29 @@ SPREAD_B = 0.91
 # scartare le particelle di 1-2 px (2 px -> 43.97 um, 3 px -> 52.84 um).
 MIN_ACTUAL_DIAMETER_UM = 50.0
 
-# Controllo qualita' NOSTRO, non di DepositScan: se un singolo oggetto occupa
-# piu' di questa frazione della ROI non e' un deposito ma sfondo collassato
-# sotto la soglia (scansioni con gradiente di illuminazione). Sui 24 casi di
-# riferimento separa nettamente: degradate 25.8-27.8%, la piu' alta tra le
-# valide 4.5%.
+# Controllo qualita' NOSTRO, non di DepositScan. Lo sfondo collassato sotto la
+# soglia (scansioni con gradiente di illuminazione) si riconosce da DUE segnali
+# insieme; da solo nessuno dei due basta.
+#
+# 1. un singolo oggetto occupa piu' di MAX_COMPONENT_FRAC della ROI.
+#    Sui 24 casi di riferimento: degradate 26.2-28.2%, la piu' alta tra le
+#    valide 4.5%. Ma su card molto bagnate le gocce si fondono in una macchia
+#    unica legittima, che da sola farebbe scattare il flag a vuoto.
+# 2. il livello di sfondo della carta scende vicino alla soglia di 127.
+#    Misurato come percentile basso dei massimi locali (vedi _background_floor):
+#    degradate 136-138, la piu' bassa tra le valide 147.
+#
+# La soglia 143 sta in mezzo ai due gruppi. Alzarla rende il controllo piu'
+# aggressivo, abbassarla piu' permissivo.
 MAX_COMPONENT_FRAC = 0.10
+MIN_BACKGROUND_GRAY = 143.0
+
+# Il fondo si misura sui massimi di blocchi di questo lato (px a 600 dpi): in
+# un blocco di carta pulita il massimo e' la carta, e anche in un blocco quasi
+# tutto deposito resta qualche pixel di fondo. Il percentile scarta i blocchi
+# interamente coperti dal deposito, che darebbero un falso fondo scuro.
+BG_BLOCK_PX = 64
+BG_FLOOR_PCTL = 5.0
 
 
 def to_gray(rgb: np.ndarray) -> np.ndarray:
@@ -100,7 +117,9 @@ def analyze_card(rgb_crop: np.ndarray, card_mask: np.ndarray, dpi: float = DEFAU
     dv01, dv05, dv09, ul_cm2 = _volumetric(actual_um, areas_um2, roi_area_um2)
 
     largest_frac = float(sizes_px.max() / roi_px) if len(sizes_px) else 0.0
-    quality_flag = "OK" if largest_frac <= MAX_COMPONENT_FRAC else "SFONDO_SOTTO_SOGLIA"
+    bg_floor = _background_floor(gray)
+    degraded = largest_frac > MAX_COMPONENT_FRAC and bg_floor < MIN_BACKGROUND_GRAY
+    quality_flag = "SFONDO_SOTTO_SOGLIA" if degraded else "OK"
 
     return {
         "coverage_pct": coverage_pct,
@@ -113,7 +132,28 @@ def analyze_card(rgb_crop: np.ndarray, card_mask: np.ndarray, dpi: float = DEFAU
         "ul_cm2": ul_cm2,
         "quality_flag": quality_flag,
         "largest_component_frac": largest_frac,
+        "background_floor_gray": bg_floor,
     }
+
+
+def _background_floor(gray: np.ndarray) -> float:
+    """Livello di grigio della carta nella zona peggio illuminata della ROI.
+
+    Massimo per blocchi (la carta e' il livello piu' chiaro localmente), poi un
+    percentile basso di quei massimi: cosi' un blocco tutto coperto di deposito
+    non viene scambiato per fondo scuro. Quando il valore si avvicina a 127 la
+    carta stessa sta per finire sotto soglia.
+    """
+    h, w = gray.shape
+    b = BG_BLOCK_PX
+    if h < b or w < b:  # card troppo piccola per il campionamento a blocchi
+        return float(gray.max())
+    maxima = [
+        gray[y:y + b, x:x + b].max()
+        for y in range(0, h - b + 1, b)
+        for x in range(0, w - b + 1, b)
+    ]
+    return float(np.percentile(maxima, BG_FLOOR_PCTL))
 
 
 def _volumetric(actual_um, areas_um2, roi_area_um2):

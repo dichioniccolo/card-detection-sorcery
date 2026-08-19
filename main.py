@@ -27,12 +27,16 @@ def main():
                         help="volume di applicazione in L/ha, colonna DROP SIZE (default 200)")
     parser.add_argument("-j", "--jobs", type=int, default=0,
                         help="processi paralleli (default: numero di CPU)")
+    parser.add_argument("--force", action="store_true",
+                        help="elabora comunque i fogli problematici: cerca la griglia con "
+                             "parametri permissivi e, se una card e' illeggibile, salva "
+                             "lo stesso le altre tre")
     args = parser.parse_args()
 
     jobs = args.jobs if args.jobs > 0 else (multiprocessing.cpu_count() or 1)
     jobs = max(1, min(jobs, len(args.images)))
 
-    tasks = [(p, args.dpi, args.drop_size) for p in args.images]
+    tasks = [(p, args.dpi, args.drop_size, args.force) for p in args.images]
     total = len(tasks)
     results = {}
     failed = []
@@ -42,17 +46,17 @@ def main():
     if jobs == 1:
         done = 0
         for t in tasks:
-            path, rows, err = process_one(t)
+            path, rows, notes, err = process_one(t)
             done += 1
-            _report(path, rows, err, done, total, results, failed)
+            _report(path, rows, notes, err, done, total, results, failed)
     else:
         with ProcessPoolExecutor(max_workers=jobs) as pool:
             futures = {pool.submit(process_one, t): t[0] for t in tasks}
             done = 0
             for fut in as_completed(futures):
-                path, rows, err = fut.result()
+                path, rows, notes, err = fut.result()
                 done += 1
-                _report(path, rows, err, done, total, results, failed)
+                _report(path, rows, notes, err, done, total, results, failed)
 
     # ordine di output stabile: come sulla riga di comando, non come finiscono
     all_rows = [r for p in args.images for r in results.get(p, [])]
@@ -60,25 +64,28 @@ def main():
 
     print(f"Scritte {len(all_rows)} righe in {args.output}", file=sys.stderr)
     if failed:
-        print(f"{len(failed)} fogli non elaborati:", file=sys.stderr)
+        print(f"\n{len(failed)} fogli NON elaborati, da recuperare a mano:", file=sys.stderr)
         for p, e in failed:
-            print(f"  {p}: {e}", file=sys.stderr)
+            print(f"  {p}\n      motivo: {e}", file=sys.stderr)
+        if not args.force:
+            print("  (riprova con --force per elaborarli comunque)", file=sys.stderr)
 
 
-def _report(path, rows, err, done, total, results, failed):
+def _report(path, rows, notes, err, done, total, results, failed):
     if err:
         failed.append((path, err))
-        print(f"[{done}/{total}] {path}  SALTATO - {err}", file=sys.stderr)
+        print(f"[{done}/{total}] SALTATO  {path}\n      motivo: {err}", file=sys.stderr)
         return
     results[path] = rows
-    notes = []
+    notes = list(notes)
     for r in rows:
         if not r["label_ok"]:
             notes.append(f"card {r['card_index']} etichetta '{r['label_raw_text']}'")
-        if r["quality_flag"] != "OK":
+        if str(r["quality_flag"]).startswith("SFONDO"):
             notes.append(f"card {r['card_index']} scansione degradata")
-    suffix = "  <-- " + "; ".join(notes) if notes else ""
-    print(f"[{done}/{total}] {path}{suffix}", file=sys.stderr)
+    print(f"[{done}/{total}] {path}", file=sys.stderr)
+    for n in notes:
+        print(f"      ! {n}", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -35,7 +35,16 @@ def _group(idxs, gap=5):
     return [int(np.mean(g)) for g in groups]
 
 
-def detect_grid(gray: np.ndarray, dark_thresh: int = 100):
+# Parametri di rilevamento della griglia. I default valgono per le scansioni di
+# riferimento; il sweep permissivo (vedi locate_cells) li fa variare quando la
+# griglia non viene trovata al primo colpo.
+DARK_THRESH = 100
+ROW_FRAC = 0.6
+COL_FRAC = 0.3
+
+
+def detect_grid(gray: np.ndarray, dark_thresh: int = DARK_THRESH,
+                row_frac: float = ROW_FRAC, col_frac: float = COL_FRAC):
     """Ritorna (rows, cols): 5 y di linee orizzontale, 3 x di linee verticali."""
     h, w = gray.shape
     dark = gray < dark_thresh
@@ -43,18 +52,47 @@ def detect_grid(gray: np.ndarray, dark_thresh: int = 100):
     # colonna etichetta presunta nella meta' destra della pagina: usa una
     # finestra larga e permissiva, poi raffina una volta note le colonne.
     label_strip = dark[:, int(w * 0.55):int(w * 0.90)]
-    row_frac = label_strip.mean(axis=1)
-    rows = _group(np.where(row_frac > 0.6)[0])
+    frac = label_strip.mean(axis=1)
+    rows = _group(np.where(frac > row_frac)[0])
     if len(rows) != 5:
         raise ValueError(f"Attese 5 linee orizzontali, trovate {len(rows)}: {rows}")
 
     top, bot = rows[0], rows[-1]
-    col_frac = dark[top:bot, :].mean(axis=0)
-    cols = _group(np.where(col_frac > 0.3)[0])
+    frac = dark[top:bot, :].mean(axis=0)
+    cols = _group(np.where(frac > col_frac)[0])
     if len(cols) != 3:
         raise ValueError(f"Attese 3 linee verticali, trovate {len(cols)}: {cols}")
 
     return rows, cols
+
+
+# Sweep usato in modalita' permissiva: soglie piu' basse recuperano le griglie
+# stampate chiare o scansionate slavate, quelle piu' alte i fogli con sporco o
+# ombre che fanno trovare linee di troppo. Il primo insieme di parametri che da'
+# esattamente 5 righe e 3 colonne vince.
+_RELAXED_SWEEP = [
+    (dark, row, col)
+    for dark in (100, 120, 140, 160, 80, 60)
+    for row in (0.6, 0.5, 0.4, 0.3, 0.7, 0.8)
+    for col in (0.3, 0.25, 0.2, 0.15, 0.4, 0.5)
+]
+
+
+def detect_grid_relaxed(gray: np.ndarray):
+    """detect_grid con sweep dei parametri. Ritorna (rows, cols, params_usati)."""
+    errors = []
+    for dark, row, col in _RELAXED_SWEEP:
+        try:
+            rows, cols = detect_grid(gray, dark_thresh=dark, row_frac=row, col_frac=col)
+        except ValueError as e:
+            errors.append(str(e))
+            continue
+        return rows, cols, (dark, row, col)
+    # riporta l'esito coi parametri di default: e' il piu' informativo
+    raise ValueError(
+        f"griglia non trovata con nessuno dei {len(_RELAXED_SWEEP)} set di "
+        f"parametri provati (col default: {errors[0] if errors else 'n/d'})"
+    )
 
 
 def build_cells(rows, cols, margin: int = 8) -> list:
@@ -73,8 +111,17 @@ def build_cells(rows, cols, margin: int = 8) -> list:
     return cells
 
 
-def locate_cells(image_path: str) -> list:
+def locate_cells(image_path: str, relaxed: bool = False):
+    """Ritorna (celle, nota). `nota` e' None se la griglia e' stata trovata coi
+    parametri di default, altrimenti descrive quelli che hanno funzionato."""
     im = Image.open(image_path)
     gray = np.array(im.convert("L"))
-    rows, cols = detect_grid(gray)
-    return build_cells(rows, cols)
+    if not relaxed:
+        return build_cells(*detect_grid(gray)), None
+    try:
+        return build_cells(*detect_grid(gray)), None
+    except ValueError:
+        rows, cols, params = detect_grid_relaxed(gray)
+        note = ("griglia trovata con parametri permissivi "
+                f"(dark_thresh={params[0]}, row_frac={params[1]}, col_frac={params[2]})")
+        return build_cells(rows, cols), note
