@@ -272,7 +272,10 @@ class App:
 
     def _build_log_card(self, parent):
         card = ttk.Frame(parent, style="Card.TFrame", padding=PAD)
-        ttk.Label(card, text="Log", style="Title.TLabel").pack(anchor=W, pady=(0, 8))
+        head = ttk.Frame(card, style="CardBody.TFrame")
+        head.pack(fill=X, pady=(0, 8))
+        ttk.Label(head, text="Log", style="Title.TLabel").pack(side=LEFT)
+        ttk.Button(head, text="Svuota log", command=self.clear_log).pack(side=RIGHT)
         self.log_text = ScrolledText(
             card, height=10, state="disabled", font=self.font_mono,
             background=SURFACE, foreground=TEXT, insertbackground=TEXT,
@@ -421,6 +424,18 @@ class App:
     def _log(self, msg):
         self.log_queue.put(msg)
 
+    def clear_log(self):
+        # svuotare anche la coda: i messaggi gia' in attesa ricomparirebbero
+        # nel widget al giro successivo di _poll_log_queue
+        while True:
+            try:
+                self.log_queue.get_nowait()
+            except queue.Empty:
+                break
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", END)
+        self.log_text.configure(state="disabled")
+
     def _poll_log_queue(self):
         try:
             while True:
@@ -460,6 +475,7 @@ class App:
             messagebox.showerror("Valore non valido", "DROP SIZE deve essere un numero (L/ha).")
             return
         self.running = True
+        self.clear_log()
         self.run_button.config(state="disabled")
         self.progress.configure(maximum=len(self.image_paths), value=0)
         threading.Thread(
