@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""GUI: seleziona uno o piu' JPG di fogli A4, elabora, esporta CSV nella
-cartella scelta dall'utente.
+"""GUI: seleziona uno o piu' JPG di fogli A4, elabora, esporta un file Excel
+nella cartella scelta dall'utente.
 """
 import multiprocessing
 import os
@@ -25,7 +25,7 @@ except ImportError:  # senza tkinterdnd2 la GUI funziona, solo senza drag & drop
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from pipeline import write_csv  # noqa: E402
+from pipeline import find_duplicates, format_duplicates, write_xlsx  # noqa: E402
 from worker import process_one  # noqa: E402
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
@@ -54,7 +54,7 @@ PAD = 12              # passo di spaziatura, usato ovunque
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("DepositScan replica - esportazione CSV")
+        root.title("DepositScan replica - esportazione Excel")
         root.geometry("1000x800")
         root.minsize(880, 700)
         root.configure(background=BG)
@@ -62,7 +62,7 @@ class App:
         self.image_paths = []
         self.tree_items = {}  # id riga Treeview -> percorso
         self.out_dir = StringVar(value=str(Path.home()))
-        self.out_name = StringVar(value="output.csv")
+        self.out_name = StringVar(value="output.xlsx")
         self.drop_size = StringVar(value="200")
         self.force = BooleanVar(value=False)
         self.status = StringVar(value="Pronto.")
@@ -236,7 +236,7 @@ class App:
         field(1, 0, "Cartella output:", self.out_dir, 52, span=4)
         ttk.Button(card, text="Scegli...", command=self.choose_out_dir).grid(
             row=1, column=5, sticky=W, padx=(8, 0), pady=4)
-        field(2, 0, "Nome file CSV:", self.out_name, 24)
+        field(2, 0, "Nome file Excel:", self.out_name, 24)
         field(2, 2, "DROP SIZE (L/ha):", self.drop_size, 8)
         card.columnconfigure(1, weight=1)
 
@@ -256,7 +256,7 @@ class App:
     def _build_actions(self, row):
         bar = ttk.Frame(self.root)
         bar.grid(row=row, column=0, sticky=E + W, padx=PAD, pady=(8, 0))
-        self.run_button = ttk.Button(bar, text="Elabora ed esporta CSV",
+        self.run_button = ttk.Button(bar, text="Elabora ed esporta Excel",
                                      style="Accent.TButton", command=self.run_pipeline)
         self.run_button.pack(side=LEFT)
         self.open_button = ttk.Button(bar, text="Apri cartella output",
@@ -407,7 +407,7 @@ class App:
                 # Serve un percorso assoluto con separatori Windows.
                 target = os.path.normpath(str(d))
                 if self.last_output and Path(self.last_output).parent == d:
-                    # /select, evidenzia il CSV appena scritto
+                    # /select, evidenzia il file appena scritto
                     subprocess.Popen(
                         ["explorer", f"/select,{os.path.normpath(str(self.last_output))}"])
                 else:
@@ -460,9 +460,9 @@ class App:
         if not out_dir.is_dir():
             messagebox.showerror("Cartella non valida", f"'{out_dir}' non esiste.")
             return
-        out_name = self.out_name.get().strip() or "output.csv"
-        if not out_name.lower().endswith(".csv"):
-            out_name += ".csv"
+        out_name = self.out_name.get().strip() or "output.xlsx"
+        if not out_name.lower().endswith(".xlsx"):
+            out_name += ".xlsx"
         out_path = out_dir / out_name
         if out_path.exists() and not messagebox.askyesno(
             "File esistente", f"{out_path.name} esiste gia'. Sovrascrivere?"
@@ -532,10 +532,14 @@ class App:
             if not all_rows:
                 raise RuntimeError("Nessuna card elaborata: controlla i file di input.")
 
-            write_csv(all_rows, str(out_path))
+            write_xlsx(all_rows, str(out_path))
             self.last_output = out_path
 
+            dups = find_duplicates(all_rows)
+
             summary = [f"Scritte {len(all_rows)} righe in {out_path}"]
+            if dups:
+                summary.append(f"{len(dups)} etichette duplicate (elenco nel log)")
             if bad_labels:
                 summary.append(f"{bad_labels} etichette non riconosciute (da verificare a mano)")
             if bad_quality:
@@ -543,6 +547,12 @@ class App:
             if failed:
                 summary.append(f"{len(failed)} fogli saltati (elenco nel log)")
             self._log("Fatto. " + " | ".join(summary))
+            if dups:
+                # stessa etichetta due volte nello stesso output: una delle due
+                # card e' stata scansionata o etichettata male, va controllata
+                self._log(f"\n{len(dups)} etichette duplicate nello stesso output:")
+                for line in format_duplicates(dups):
+                    self._log(line)
             if failed:
                 # elenco finale: il log scorre durante l'elaborazione, qui i
                 # fogli da recuperare restano tutti insieme in fondo

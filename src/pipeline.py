@@ -1,6 +1,6 @@
-import csv
-
 import numpy as np
+from openpyxl import Workbook
+from openpyxl.styles import Font
 from PIL import Image
 
 from geometry import locate_cells
@@ -11,7 +11,7 @@ from deposit_metrics import analyze_card, DEFAULT_DPI
 # Volume di applicazione (L/ha) usato nelle prove di riferimento.
 DEFAULT_DROP_SIZE = 200
 
-CSV_FIELDS = [
+OUTPUT_FIELDS = [
     "HEIGHT",
     "PLANT",
     "REPLICA",
@@ -63,7 +63,7 @@ def process_sheet(image_path: str, dpi: float = DEFAULT_DPI, drop_size=DEFAULT_D
 
 
 def _empty_row(cell, drop_size, image_path, err):
-    row = {f: "" for f in CSV_FIELDS}
+    row = {f: "" for f in OUTPUT_FIELDS}
     row["DROP SIZE"] = drop_size
     row["quality_flag"] = f"CARD_NON_ELABORATA: {err}"
     row["label_ok"] = False
@@ -111,8 +111,50 @@ def _process_cell(image, cell, dpi, drop_size, image_path):
     return row
 
 
-def write_csv(rows: list, out_path: str):
-    with open(out_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
-        writer.writeheader()
-        writer.writerows(rows)
+# Campi che identificano una card: due righe con la stessa terna
+# etichetta/lato/verso/tesi sono lo stesso rilievo estratto due volte.
+DUP_KEY_FIELDS = ["HEIGHT", "PLANT", "REPLICA", "SIDE", "DIRECTION", "TEST"]
+
+
+def find_duplicates(rows: list):
+    """Righe con la stessa etichetta all'interno dello stesso output.
+
+    Ritorna [(chiave, [righe]), ...] per le sole chiavi con piu' di una riga.
+    Le righe senza etichetta letta (label_ok falso o campi vuoti) non entrano:
+    non sono duplicati, sono etichette da rileggere a mano.
+    """
+    groups = {}
+    for row in rows:
+        values = [row.get(f) for f in DUP_KEY_FIELDS]
+        if not row.get("label_ok") or any(v in (None, "") for v in values):
+            continue
+        groups.setdefault(tuple(values), []).append(row)
+    return [(k, v) for k, v in groups.items() if len(v) > 1]
+
+
+def format_duplicates(dups: list) -> list:
+    """Righe di testo pronte per il log/console."""
+    lines = []
+    for key, rows in dups:
+        label = " ".join(str(v) for v in key)
+        lines.append(f"  {label} ({len(rows)} volte):")
+        for r in rows:
+            lines.append(f"      {r['source_file']} card {r['card_index']}")
+    return lines
+
+
+def write_xlsx(rows: list, out_path: str):
+    """Una riga per card, colonne in ordine `OUTPUT_FIELDS`."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "DepositScan"
+    ws.append(OUTPUT_FIELDS)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    ws.freeze_panes = "A2"
+    for row in rows:
+        ws.append([row.get(f, "") for f in OUTPUT_FIELDS])
+    for i, name in enumerate(OUTPUT_FIELDS, start=1):
+        width = max(len(name) + 2, 12)
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = width
+    wb.save(out_path)

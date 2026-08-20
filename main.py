@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""CLI: da uno o piu' JPG di fogli A4 (4 sticky card ciascuno) genera un CSV
-con le metriche per card.
+"""CLI: da uno o piu' JPG di fogli A4 (4 sticky card ciascuno) genera un file
+Excel con le metriche per card.
 
 Uso:
-    python main.py assets/*.jpg -o out.csv
-    python main.py cartella/*.jpg -o out.csv -j 8
+    python main.py assets/*.jpg -o out.xlsx
+    python main.py cartella/*.jpg -o out.xlsx -j 8
 """
 import argparse
 import multiprocessing
@@ -14,14 +14,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from pipeline import write_csv  # noqa: E402
+from pipeline import find_duplicates, format_duplicates, write_xlsx  # noqa: E402
 from worker import process_one  # noqa: E402
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("images", nargs="+", help="JPG dei fogli A4 da processare")
-    parser.add_argument("-o", "--output", default="output.csv", help="file CSV di output")
+    parser.add_argument("-o", "--output", default="output.xlsx",
+                        help="file Excel di output (default output.xlsx)")
     parser.add_argument("--dpi", type=float, default=600.0, help="DPI di scansione (default 600)")
     parser.add_argument("--drop-size", type=int, default=200,
                         help="volume di applicazione in L/ha, colonna DROP SIZE (default 200)")
@@ -60,9 +61,17 @@ def main():
 
     # ordine di output stabile: come sulla riga di comando, non come finiscono
     all_rows = [r for p in args.images for r in results.get(p, [])]
-    write_csv(all_rows, args.output)
+    out_path = Path(args.output)
+    if out_path.suffix.lower() != ".xlsx":
+        out_path = out_path.with_suffix(".xlsx")
+    write_xlsx(all_rows, str(out_path))
+    print(f"Scritte {len(all_rows)} righe in {out_path}", file=sys.stderr)
 
-    print(f"Scritte {len(all_rows)} righe in {args.output}", file=sys.stderr)
+    dups = find_duplicates(all_rows)
+    if dups:
+        print(f"\n{len(dups)} etichette duplicate nello stesso output:", file=sys.stderr)
+        for line in format_duplicates(dups):
+            print(line, file=sys.stderr)
     if failed:
         print(f"\n{len(failed)} fogli NON elaborati, da recuperare a mano:", file=sys.stderr)
         for p, e in failed:

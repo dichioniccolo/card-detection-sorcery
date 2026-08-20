@@ -1,7 +1,12 @@
 # Replica indipendente di DepositScan
 
-Da JPG di fogli A4 scansionati (4 sticky card ciascuno) produce un CSV con
-metadati e metriche di deposito per ogni card.
+Da JPG di fogli A4 scansionati (4 sticky card ciascuno) produce un file Excel
+(`.xlsx`) con metadati e metriche di deposito per ogni card.
+
+Se nello stesso output due card hanno la stessa etichetta
+(`HEIGHT PLANT REPLICA SIDE DIRECTION TEST`), le righe duplicate vengono
+elencate a fine elaborazione, con file e numero di card: vanno controllate a
+mano, perche' significa che una delle due e' stata letta o etichettata male.
 
 ## Uso
 
@@ -14,7 +19,7 @@ venv/bin/python3 gui.py
 Riga di comando (`-j` = processi paralleli, default: numero di CPU):
 
 ```bash
-venv/bin/python3 main.py assets/*.jpg -o output.csv -j 8
+venv/bin/python3 main.py assets/*.jpg -o output.xlsx -j 8
 ```
 
 Un foglio su cui la griglia non viene trovata, o con una card illeggibile,
@@ -148,7 +153,7 @@ Il software le rileva da solo e le marca `SFONDO_SOTTO_SOGLIA` nella colonna
 
 La prima condizione da sola non basta: su card molto bagnate le gocce si
 fondono in una macchia unica legittima. `H2P1R1MUPA` ha il 41% di copertura ed
-e' valida. Entrambi i valori finiscono nel CSV, cosi' si vede sempre perche' il
+e' valida. Entrambi i valori finiscono nell'output, cosi' si vede sempre perche' il
 flag e' scattato — e se scatta troppo spesso, quale delle due condizioni
 regolare (`MAX_COMPONENT_FRAC`, `MIN_BACKGROUND_GRAY` in
 `src/deposit_metrics.py`).

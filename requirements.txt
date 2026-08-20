@@ -2,3 +2,4 @@ numpy
 pillow
 scipy
 tkinterdnd2
+openpyxl

@@ -17,6 +17,7 @@ a = Analysis(
     hiddenimports=[
         'pipeline', 'worker', 'geometry', 'card_mask', 'label_ocr',
         'label_glyphs', 'deposit_metrics',
+        'openpyxl',
         'scipy._lib.array_api_compat.numpy.fft',
         'scipy.special._cdflib',
     ],
