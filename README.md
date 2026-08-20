@@ -14,7 +14,7 @@ griglia delimita, due o venti che siano. I fogli di riferimento ne hanno 4
 (verticali) e 6 (orizzontali), ma non c'e' niente di cablato su quei numeri.
 Una cella con l'etichetta stampata ma senza card incollata non e' un errore:
 la riga esce lo stesso, coi soli metadati letti dall'etichetta, metriche vuote
-e `quality_flag = CELLA_VUOTA: nessuna card incollata`. E' quello che fa anche
+e `quality_flag = CARTINA ASSENTE`. E' quello che fa anche
 DepositScan, e serve a far tornare i conti (36 fogli da 4 celle = 144 righe,
 anche se due card non sono mai state incollate).
 

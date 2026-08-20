@@ -53,7 +53,7 @@ def process_sheet(image_path: str, dpi: float = DEFAULT_DPI, drop_size=DEFAULT_D
             # e il conteggio finale non tornerebbe.
             notes.append(f"cella {cell.row_index + 1} vuota, nessuna card")
             rows.append(_metadata_row(image, cell, drop_size, image_path,
-                                      "CELLA_VUOTA: nessuna card incollata"))
+                                      CARD_MISSING_FLAG))
             continue
         try:
             row = _process_cell(image, cell, dpi, drop_size, image_path)
@@ -76,6 +76,9 @@ def process_sheet(image_path: str, dpi: float = DEFAULT_DPI, drop_size=DEFAULT_D
 # Una card incollata ne copre piu' della meta'; sotto questa soglia ci sono
 # solo granelli di sporco o il bordo della griglia sfuggito al margine.
 EMPTY_CELL_FRAC = 0.05
+
+# Messaggio del quality_flag per la cella con l'etichetta ma senza card.
+CARD_MISSING_FLAG = "CARTINA ASSENTE"
 
 
 def _is_empty_cell(image, cell) -> bool:
