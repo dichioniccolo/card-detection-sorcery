@@ -1,10 +1,9 @@
 import numpy as np
 from openpyxl import Workbook
 from openpyxl.styles import Font
-from PIL import Image
 
-from geometry import locate_cells
-from card_mask import extract_card
+from geometry import load_sheet, locate_cells
+from card_mask import extract_card, not_white_mask
 from label_ocr import read_label
 from deposit_metrics import analyze_card, DEFAULT_DPI
 
@@ -41,25 +40,42 @@ def process_sheet(image_path: str, dpi: float = DEFAULT_DPI, drop_size=DEFAULT_D
                   relaxed: bool = False):
     """Ritorna (righe, note). `note` elenca i recuperi fatti in modalita'
     permissiva, da riportare all'utente: sono card da controllare a mano."""
-    image = Image.open(image_path)
-    cells, grid_note = locate_cells(image_path, relaxed=relaxed)
+    image = load_sheet(image_path)
+    image, cells, grid_note = locate_cells(image, relaxed=relaxed)
     notes = [grid_note] if grid_note else []
 
     rows = []
     for cell in cells:
+        if _is_empty_cell(image, cell):
+            # griglia prestampata con piu' righe delle card incollate: la cella
+            # vuota non e' un errore, semplicemente non produce una riga
+            notes.append(f"cella {cell.row_index + 1} vuota, nessuna card")
+            continue
         try:
             row = _process_cell(image, cell, dpi, drop_size, image_path)
         except Exception as e:
             if not relaxed:
                 raise
             # In modalita' permissiva una card illeggibile non fa perdere le
-            # altre tre: esce una riga senza metriche, marcata nel quality_flag.
+            # altre del foglio: esce una riga senza metriche, marcata nel
+            # quality_flag.
             notes.append(f"card {cell.row_index + 1} non elaborata: {e}")
             rows.append(_empty_row(cell, drop_size, image_path, str(e)))
             continue
         rows.append(row)
 
     return rows, notes
+
+
+# Frazione di pixel non bianchi sotto la quale la cella si considera vuota.
+# Una card incollata ne copre piu' della meta'; sotto questa soglia ci sono
+# solo granelli di sporco o il bordo della griglia sfuggito al margine.
+EMPTY_CELL_FRAC = 0.05
+
+
+def _is_empty_cell(image, cell) -> bool:
+    crop = np.array(image.crop(cell.card_box).convert("RGB"))
+    return float(not_white_mask(crop).mean()) < EMPTY_CELL_FRAC
 
 
 def _empty_row(cell, drop_size, image_path, err):
@@ -87,6 +103,8 @@ def _process_cell(image, cell, dpi, drop_size, image_path):
         "REPLICA": label.get("replica"),
         "SIDE": label.get("side"),
         "DIRECTION": label.get("direction"),
+        # sigla della tesi: la parte dell'etichetta dopo UP/DW (A, B, C, D,
+        # CNV, DR, ...), stesso nome di colonna del file DepositScan
         "TEST": label.get("test"),
         # Volume di applicazione del trattamento (L/ha): metadato
         # sperimentale, non ricavabile dall'immagine.

@@ -1,7 +1,26 @@
 # Replica indipendente di DepositScan
 
-Da JPG di fogli A4 scansionati (4 sticky card ciascuno) produce un file Excel
-(`.xlsx`) con metadati e metriche di deposito per ogni card.
+Da JPG di fogli A4 scansionati produce un file Excel (`.xlsx`) con metadati e
+metriche di deposito per ogni card.
+
+Due formati di foglio, riconosciuti dall'orientamento della scansione:
+
+- **verticale**: card una per riga, card a sinistra ed etichetta a destra;
+- **orizzontale**: card una per colonna, card in alto ed etichetta in basso,
+  col testo dell'etichetta ruotato.
+
+Quante card ci siano non e' fissato: si estraggono tutte le celle che la
+griglia delimita, due o venti che siano. I fogli di riferimento ne hanno 4
+(verticali) e 6 (orizzontali), ma non c'e' niente di cablato su quei numeri.
+Una cella della griglia senza card incollata viene saltata senza errore: il log
+la segnala come vuota e l'output semplicemente non ha quella riga.
+
+Il foglio orizzontale viene ruotato di 90 gradi in senso antiorario prima di
+tutto il resto: le etichette tornano dritte, le card orizzontali, e le righe
+escono nell'ordine alto-basso del foglio raddrizzato (nell'originale: da
+sinistra a destra). La sigla della tesi puo' essere di una lettera (`A`-`D`,
+fogli verticali) o di piu' lettere (es. `CNV`, `DR`), e finisce nella colonna
+`TEST`, come nel file DepositScan di riferimento.
 
 Se nello stesso output due card hanno la stessa etichetta
 (`HEIGHT PLANT REPLICA SIDE DIRECTION TEST`), le righe duplicate vengono
@@ -22,15 +41,31 @@ Riga di comando (`-j` = processi paralleli, default: numero di CPU):
 venv/bin/python3 main.py assets/*.jpg -o output.xlsx -j 8
 ```
 
-Un foglio su cui la griglia non viene trovata, o con una card illeggibile,
-viene saltato: il log ne stampa percorso completo e motivo, cosi' si sa cosa
+### Fogli storti
+
+Basta mezzo grado di inclinazione perche' le linee della griglia si spalmino su
+una decina di righe di pixel e non vengano piu' viste. Se la griglia non si
+trova al primo colpo, il foglio viene raddrizzato da solo: l'angolo si cerca
+fra -5 e +5 gradi a passi di 0,1 su una copia rimpicciolita, poi i cinque
+angoli migliori si riprovano a piena risoluzione. Il log dice di quanto e'
+stato ruotato.
+
+La ricerca dell'angolo parte solo quando serve, quindi sui fogli dritti non
+costa nulla. Sulle card di un foglio raddrizzato le metriche escono da
+un'immagine ricampionata dalla rotazione: differenze minime, ma le righe
+restano da guardare con un occhio in piu'.
+
+### Fogli problematici
+
+Un foglio su cui la griglia non viene trovata nemmeno cosi', o con una card
+illeggibile, viene saltato: il log ne stampa percorso completo e motivo, cosi' si sa cosa
 recuperare a mano. Con `--force` (nella GUI: *Elabora comunque i fogli
 problematici*) il foglio viene ripreso lo stesso:
 
 - la griglia si cerca con un sweep di parametri piu' permissivi, e il log dice
   quali hanno funzionato;
-- una card illeggibile non fa piu' perdere le altre tre: esce una riga senza
-  metriche, con `quality_flag = CARD_NON_ELABORATA: <motivo>`.
+- una card illeggibile non fa piu' perdere le altre del foglio: esce una riga
+  senza metriche, con `quality_flag = CARD_NON_ELABORATA: <motivo>`.
 
 Le righe recuperate cosi' vanno controllate a mano: la griglia trovata con
 parametri diversi puo' ritagliare le card in modo leggermente diverso.
@@ -46,9 +81,12 @@ com'e'.
 ## Pipeline
 
 1. rilevamento della griglia prestampata (linee della tabella)
-2. individuazione delle 4 card e delle 4 etichette
+2. individuazione delle celle della griglia, quante che siano, e scarto di
+   quelle senza card incollata
 3. lettura dell'etichetta per confronto con template di caratteri, vincolata
-   al formato `H# P# R# [M|V] [UP|DW] [A-D]`
+   al formato `H# P# R# [M|V] [UP|DW] <sigla tesi>`; i granelli di sporco
+   della scansione vengono tolti prima di ritagliare i caratteri, altrimenti
+   allungano il bounding box di un carattere e lo rendono irriconoscibile
 4. conversione 8-bit come ImageJ: media non pesata `(R+G+B)/3`, arrotondata
 5. soglia **inclusiva** a 127: deposito = pixel `<= 127`
 6. componenti connesse (8-connettivita', nessun filtro dimensionale)

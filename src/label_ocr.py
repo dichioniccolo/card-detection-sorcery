@@ -20,7 +20,7 @@ from label_glyphs import segment_glyphs, normalize_glyph
 
 _LABEL_RE = re.compile(
     r"H(?P<height>\d+)P(?P<plant>\d+)R(?P<replica>\d+)"
-    r"(?P<side>[MV])(?P<direction>UP|DW)(?P<test>[A-D])"
+    r"(?P<side>[MV])(?P<direction>UP|DW)(?P<test>[A-Z]+)"
 )
 
 _TEMPLATES = None
@@ -47,10 +47,15 @@ def _load_templates():
 
 DIGITS = "0123456789"
 
-# L'etichetta ha una struttura fissa: H<cifra> P<cifra> R<cifra> <M|V>
-# <UP|DW> <A-D>. Vincolare ogni posizione ai soli caratteri ammessi elimina
-# le confusioni fra glifi simili (es. P letto come A).
-_POSITION_ALPHABET = ["H", DIGITS, "P", DIGITS, "R", DIGITS, "MV", None, None, "ABCD"]
+# L'etichetta ha un prefisso di struttura fissa: H<cifra> P<cifra> R<cifra>
+# <M|V> <UP|DW>. Vincolare ogni posizione ai soli caratteri ammessi elimina le
+# confusioni fra glifi simili (es. P letto come A). None alle posizioni 7-8:
+# la direzione si decide sulla coppia, non carattere per carattere.
+_PREFIX_ALPHABET = ["H", DIGITS, "P", DIGITS, "R", DIGITS, "MV", None, None]
+
+# Dopo il prefisso c'e' la sigla della tesi: una lettera nei fogli verticali
+# (A-D), piu' lettere in quelli orizzontali (es. CNV). Lunghezza libera.
+MIN_GLYPHS = len(_PREFIX_ALPHABET) + 1
 
 
 def _distances(glyph: np.ndarray):
@@ -58,6 +63,10 @@ def _distances(glyph: np.ndarray):
     v = normalize_glyph(glyph)
     dist = np.sqrt(((templates - v) ** 2).sum(axis=(1, 2)))
     return {c: float(dist[i]) for i, c in enumerate(chars)}
+
+
+def _letters() -> str:
+    return "".join(c for c in _load_templates()[0] if c.isalpha())
 
 
 def _pick(dists: dict, allowed: str):
@@ -74,15 +83,19 @@ def read_label(image: Image.Image, label_box: tuple) -> dict:
     gray = np.array(image.crop(label_box).convert("L"))
     glyphs = segment_glyphs(gray)
 
-    if len(glyphs) != len(_POSITION_ALPHABET):
+    if len(glyphs) < MIN_GLYPHS:
         text = "".join(_pick(_distances(g), "".join(sorted(_load_templates()[0])))[0]
                        for g in glyphs)
         return {"ok": False, "raw_text": text, "compact_text": text}
 
     dists = [_distances(g) for g in glyphs]
 
+    # prefisso a posizioni fisse, poi la sigla della tesi: tutti i glifi che
+    # restano, vincolati alle sole lettere
+    alphabet = list(_PREFIX_ALPHABET) + [_letters()] * (len(glyphs) - len(_PREFIX_ALPHABET))
+
     chars, worst_margin = [], float("inf")
-    for i, allowed in enumerate(_POSITION_ALPHABET):
+    for i, allowed in enumerate(alphabet):
         if allowed is None:
             continue
         ch, _d, margin = _pick(dists[i], allowed)
@@ -97,8 +110,9 @@ def read_label(image: Image.Image, label_box: tuple) -> dict:
     worst_margin = min(worst_margin, abs(up - dw))
 
     out = dict(chars)
+    test = "".join(out[i] for i in range(len(_PREFIX_ALPHABET), len(glyphs)))
     text = (out[0] + out[1] + out[2] + out[3] + out[4] + out[5] + out[6]
-            + direction + out[9])
+            + direction + test)
 
     m = _LABEL_RE.fullmatch(text)
     if not m:

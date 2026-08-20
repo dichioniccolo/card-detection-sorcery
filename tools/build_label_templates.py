@@ -14,12 +14,11 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from geometry import locate_cells  # noqa: E402
+from geometry import load_sheet, locate_cells  # noqa: E402
 from label_glyphs import segment_glyphs, normalize_glyph  # noqa: E402
 
 TRUTH = {
@@ -29,6 +28,12 @@ TRUTH = {
     "PROVA_B_0009.jpg": ["H1P1R1VUPB", "H1P1R1VDWB", "H2P1R1VUPB", "H2P1R1VDWB"],
     "PROVA_C_0008.jpg": ["H3P1R1VUPC", "H3P1R1VDWC", "H4P1R1VUPC", "H4P1R1VDWC"],
     "PROVA_D_0016.jpg": ["H3P1R1VUPD", "H3P1R1VDWD", "H4P1R1VUPD", "H4P1R1VDWD"],
+    # foglio orizzontale: 6 card, etichette lette dopo la rotazione
+    # (dall'alto in basso una volta raddrizzato il foglio)
+    "20260618_CNV01452120260619103843_0001.jpg": [
+        "H1P1R1MUPCNV", "H1P1R1MDWCNV", "H2P1R1MUPCNV",
+        "H2P1R1MDWCNV", "H3P1R1MUPCNV", "H3P1R1MDWCNV",
+    ],
 }
 
 
@@ -39,8 +44,8 @@ def main():
         if not path.exists():
             print(f"manca {path}, salto", file=sys.stderr)
             continue
-        image = Image.open(path)
-        cells = locate_cells(str(path))
+        image = load_sheet(str(path))
+        image, cells, _note = locate_cells(image)
         for cell, text in zip(cells, labels):
             crop = np.array(image.crop(cell.label_box).convert("L"))
             glyphs = segment_glyphs(crop)

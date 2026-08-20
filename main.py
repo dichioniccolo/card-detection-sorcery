@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""CLI: da uno o piu' JPG di fogli A4 (4 sticky card ciascuno) genera un file
-Excel con le metriche per card.
+"""CLI: da uno o piu' JPG di fogli A4 di sticky card genera un file Excel con
+le metriche per card.
 
 Uso:
     python main.py assets/*.jpg -o out.xlsx

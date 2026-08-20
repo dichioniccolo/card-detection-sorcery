@@ -11,12 +11,45 @@ INK_THRESHOLD = 128      # sotto questo livello di grigio e' inchiostro
 MIN_GLYPH_WIDTH = 12     # scarta le macchioline di rumore
 MIN_GLYPH_INK = 40       # pixel di inchiostro minimi per un carattere
 COLUMN_GAP = 8           # colonne vuote che separano due caratteri
+ROW_GAP = 3              # righe vuote che separano due fasce orizzontali
+SPECK_INK_FRAC = 0.05    # inchiostro minimo di una fascia, sul massimo
+
+
+def _drop_specks(ink: np.ndarray) -> np.ndarray:
+    """Azzera i granelli di sporco della scansione.
+
+    Le fasce orizzontali con pochissimo inchiostro (puntini di polvere sopra o
+    sotto il testo) vanno tolte prima di ritagliare i caratteri: cadendo nelle
+    stesse colonne di un carattere ne allungherebbero il bounding box, e il
+    glifo normalizzato uscirebbe schiacciato e irriconoscibile (es. un `2`
+    letto come `1`).
+    """
+    per_row = ink.sum(axis=1)
+    rows = np.where(per_row > 0)[0]
+    if len(rows) == 0:
+        return ink
+
+    bands, start, prev = [], rows[0], rows[0]
+    for y in rows[1:]:
+        if y - prev > ROW_GAP:
+            bands.append((start, prev))
+            start = y
+        prev = y
+    bands.append((start, prev))
+
+    weights = [per_row[a:b + 1].sum() for a, b in bands]
+    floor = SPECK_INK_FRAC * max(weights)
+    out = np.zeros_like(ink)
+    for (a, b), weight in zip(bands, weights):
+        if weight >= floor:
+            out[a:b + 1] = ink[a:b + 1]
+    return out
 
 
 def segment_glyphs(gray: np.ndarray) -> list:
     """Da un ritaglio dell'etichetta ritorna la lista dei glifi (array bool),
     da sinistra a destra."""
-    ink = gray < INK_THRESHOLD
+    ink = _drop_specks(gray < INK_THRESHOLD)
     cols = np.where(ink.any(axis=0))[0]
     if len(cols) == 0:
         return []
