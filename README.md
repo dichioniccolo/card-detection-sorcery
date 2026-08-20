@@ -12,8 +12,11 @@ Due formati di foglio, riconosciuti dall'orientamento della scansione:
 Quante card ci siano non e' fissato: si estraggono tutte le celle che la
 griglia delimita, due o venti che siano. I fogli di riferimento ne hanno 4
 (verticali) e 6 (orizzontali), ma non c'e' niente di cablato su quei numeri.
-Una cella della griglia senza card incollata viene saltata senza errore: il log
-la segnala come vuota e l'output semplicemente non ha quella riga.
+Una cella con l'etichetta stampata ma senza card incollata non e' un errore:
+la riga esce lo stesso, coi soli metadati letti dall'etichetta, metriche vuote
+e `quality_flag = CELLA_VUOTA: nessuna card incollata`. E' quello che fa anche
+DepositScan, e serve a far tornare i conti (36 fogli da 4 celle = 144 righe,
+anche se due card non sono mai state incollate).
 
 Il foglio orizzontale viene ruotato di 90 gradi in senso antiorario prima di
 tutto il resto: le etichette tornano dritte, le card orizzontali, e le righe

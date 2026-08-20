@@ -47,9 +47,13 @@ def process_sheet(image_path: str, dpi: float = DEFAULT_DPI, drop_size=DEFAULT_D
     rows = []
     for cell in cells:
         if _is_empty_cell(image, cell):
-            # griglia prestampata con piu' righe delle card incollate: la cella
-            # vuota non e' un errore, semplicemente non produce una riga
+            # cella con l'etichetta stampata ma senza card incollata: la riga
+            # esce lo stesso, coi soli metadati, come nei file DepositScan di
+            # riferimento. Senza, il foglio darebbe meno righe delle sue celle
+            # e il conteggio finale non tornerebbe.
             notes.append(f"cella {cell.row_index + 1} vuota, nessuna card")
+            rows.append(_metadata_row(image, cell, drop_size, image_path,
+                                      "CELLA_VUOTA: nessuna card incollata"))
             continue
         try:
             row = _process_cell(image, cell, dpi, drop_size, image_path)
@@ -60,7 +64,8 @@ def process_sheet(image_path: str, dpi: float = DEFAULT_DPI, drop_size=DEFAULT_D
             # altre del foglio: esce una riga senza metriche, marcata nel
             # quality_flag.
             notes.append(f"card {cell.row_index + 1} non elaborata: {e}")
-            rows.append(_empty_row(cell, drop_size, image_path, str(e)))
+            rows.append(_metadata_row(image, cell, drop_size, image_path,
+                                      f"CARD_NON_ELABORATA: {e}"))
             continue
         rows.append(row)
 
@@ -78,14 +83,38 @@ def _is_empty_cell(image, cell) -> bool:
     return float(not_white_mask(crop).mean()) < EMPTY_CELL_FRAC
 
 
-def _empty_row(cell, drop_size, image_path, err):
+def _metadata_row(image, cell, drop_size, image_path, flag):
+    """Riga senza metriche: c'e' la cella ma non la misura.
+
+    L'etichetta si legge comunque, cosi' la riga resta identificabile e si
+    incrocia con le altre; se non e' leggibile restano i campi vuoti e
+    `label_ok` falso.
+    """
+    try:
+        label = read_label(image, cell.label_box)
+    except Exception:
+        label = {"ok": False, "raw_text": ""}
+
     row = {f: "" for f in OUTPUT_FIELDS}
+    row.update(_label_fields(label))
     row["DROP SIZE"] = drop_size
-    row["quality_flag"] = f"CARD_NON_ELABORATA: {err}"
-    row["label_ok"] = False
+    row["quality_flag"] = flag
     row["source_file"] = image_path
     row["card_index"] = cell.row_index + 1
     return row
+
+
+def _label_fields(label: dict) -> dict:
+    return {
+        "HEIGHT": label.get("height", ""),
+        "PLANT": label.get("plant", ""),
+        "REPLICA": label.get("replica", ""),
+        "SIDE": label.get("side", ""),
+        "DIRECTION": label.get("direction", ""),
+        "TEST": label.get("test", ""),
+        "label_ok": label["ok"],
+        "label_raw_text": label["raw_text"],
+    }
 
 
 def _process_cell(image, cell, dpi, drop_size, image_path):
@@ -98,14 +127,7 @@ def _process_cell(image, cell, dpi, drop_size, image_path):
     metrics = analyze_card(card_rgb, card_mask, dpi=dpi)
 
     row = {
-        "HEIGHT": label.get("height"),
-        "PLANT": label.get("plant"),
-        "REPLICA": label.get("replica"),
-        "SIDE": label.get("side"),
-        "DIRECTION": label.get("direction"),
-        # sigla della tesi: la parte dell'etichetta dopo UP/DW (A, B, C, D,
-        # CNV, DR, ...), stesso nome di colonna del file DepositScan
-        "TEST": label.get("test"),
+        **_label_fields(label),
         # Volume di applicazione del trattamento (L/ha): metadato
         # sperimentale, non ricavabile dall'immagine.
         "DROP SIZE": drop_size,
@@ -121,8 +143,6 @@ def _process_cell(image, cell, dpi, drop_size, image_path):
         # diagnostici del quality_flag: servono a capire perche' e' scattato
         "largest_component_frac": round(metrics["largest_component_frac"], 4),
         "background_floor_gray": round(metrics["background_floor_gray"], 1),
-        "label_ok": label["ok"],
-        "label_raw_text": label["raw_text"],
         "source_file": image_path,
         "card_index": cell.row_index + 1,
     }

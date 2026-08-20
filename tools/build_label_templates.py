@@ -40,7 +40,7 @@ TRUTH = {
 def main():
     samples = {}
     for fname, labels in TRUTH.items():
-        path = ROOT / "assets" / fname
+        path = ROOT / "assets" / "A" / fname
         if not path.exists():
             print(f"manca {path}, salto", file=sys.stderr)
             continue
