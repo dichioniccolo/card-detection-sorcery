@@ -188,7 +188,7 @@ def write_xlsx(rows: list, out_path: str):
     """Una riga per card, colonne in ordine `OUTPUT_FIELDS`."""
     wb = Workbook()
     ws = wb.active
-    ws.title = "DepositScan"
+    ws.title = "Cards Detection Sorcery"
     ws.append(OUTPUT_FIELDS)
     for cell in ws[1]:
         cell.font = Font(bold=True)

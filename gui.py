@@ -54,7 +54,7 @@ PAD = 12              # passo di spaziatura, usato ovunque
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("DepositScan replica - esportazione Excel")
+        root.title("Cards Detection Sorcery - esportazione Excel")
         root.geometry("1000x800")
         root.minsize(880, 700)
         root.configure(background=BG)

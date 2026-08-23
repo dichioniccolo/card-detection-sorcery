@@ -1,4 +1,6 @@
-# Replica indipendente di DepositScan
+# Cards Detection Sorcery
+
+Replica indipendente di DepositScan.
 
 Da JPG di fogli A4 scansionati produce un file Excel (`.xlsx`) con metadati e
 metriche di deposito per ogni card.
@@ -78,7 +80,7 @@ Nessuna dipendenza esterna oltre ai pacchetti in `requirements.txt`.
 ### Eseguibile Windows
 
 Su Windows, con Python installato, `build_windows.bat` produce
-`dist\DepositScanReplica.exe`: file singolo, avvia la GUI, condivisibile
+`dist\CardsDetectionSorcery.exe`: file singolo, avvia la GUI, condivisibile
 com'e'.
 
 ## Pipeline

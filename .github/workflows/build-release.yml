@@ -36,14 +36,14 @@ jobs:
             version="main-$(git rev-parse --short HEAD)"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "artifact=DepositScanReplica-$version.exe" >> "$GITHUB_OUTPUT"
+          echo "artifact=CardsDetectionSorcery-$version.exe" >> "$GITHUB_OUTPUT"
 
       - name: Build
-        run: pyinstaller --clean --noconfirm DepositScanReplica.spec
+        run: pyinstaller --clean --noconfirm CardsDetectionSorcery.spec
 
       - name: Rename executable
         shell: bash
-        run: mv dist/DepositScanReplica.exe "dist/${{ steps.version.outputs.artifact }}"
+        run: mv dist/CardsDetectionSorcery.exe "dist/${{ steps.version.outputs.artifact }}"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -57,7 +57,7 @@ jobs:
       - name: Prepare rolling asset
         if: startsWith(github.ref, 'refs/tags/') == false
         shell: bash
-        run: cp "dist/${{ steps.version.outputs.artifact }}" dist/DepositScanReplica-latest.exe
+        run: cp "dist/${{ steps.version.outputs.artifact }}" dist/CardsDetectionSorcery-latest.exe
 
       - name: Publish rolling development release
         if: startsWith(github.ref, 'refs/tags/') == false
@@ -67,7 +67,7 @@ jobs:
           name: Ultima build di sviluppo
           body: Build automatica dal commit ${{ github.sha }}.
           prerelease: true
-          files: dist/DepositScanReplica-latest.exe
+          files: dist/CardsDetectionSorcery-latest.exe
 
       # Su tag v* pubblica la release definitiva, con il file nominato per versione.
       - name: Publish tagged release

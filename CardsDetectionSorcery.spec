@@ -2,8 +2,8 @@
 """PyInstaller spec: eseguibile Windows singolo, avvia la GUI.
 
 Build (su Windows, vedi build_windows.bat):
-    pyinstaller --clean --noconfirm DepositScanReplica.spec
-Risultato: dist\\DepositScanReplica.exe
+    pyinstaller --clean --noconfirm CardsDetectionSorcery.spec
+Risultato: dist\\CardsDetectionSorcery.exe
 """
 
 block_cipher = None
@@ -41,7 +41,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='DepositScanReplica',
+    name='CardsDetectionSorcery',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

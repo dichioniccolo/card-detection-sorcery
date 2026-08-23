@@ -1,5 +1,5 @@
 @echo off
-REM Costruisce DepositScanReplica.exe (GUI, singolo file).
+REM Costruisce CardsDetectionSorcery.exe (GUI, singolo file).
 REM Da eseguire su Windows, in questa cartella, con Python 3.10+ installato.
 
 echo === Creazione ambiente virtuale ===
@@ -10,10 +10,10 @@ build-venv\Scripts\python.exe -m pip install --upgrade pip || goto :error
 build-venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller || goto :error
 
 echo === Build ===
-build-venv\Scripts\pyinstaller.exe --clean --noconfirm DepositScanReplica.spec || goto :error
+build-venv\Scripts\pyinstaller.exe --clean --noconfirm CardsDetectionSorcery.spec || goto :error
 
 echo.
-echo === Fatto: dist\DepositScanReplica.exe ===
+echo === Fatto: dist\CardsDetectionSorcery.exe ===
 echo Questo file e' autonomo e puoi condividerlo cosi' com'e'.
 pause
 exit /b 0
