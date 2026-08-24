@@ -14,7 +14,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from pipeline import find_duplicates, format_duplicates, write_xlsx  # noqa: E402
+from pipeline import (drop_rescanned_sheets, find_duplicates,  # noqa: E402
+                      format_duplicates, format_rescans, write_xlsx)
 from worker import process_one  # noqa: E402
 
 
@@ -61,11 +62,19 @@ def main():
 
     # ordine di output stabile: come sulla riga di comando, non come finiscono
     all_rows = [r for p in args.images for r in results.get(p, [])]
+    # lo stesso foglio scansionato due volte darebbe righe doppie: si tiene la
+    # prima scansione e si dice quale file e' stato messo da parte
+    all_rows, rescans = drop_rescanned_sheets(all_rows)
     out_path = Path(args.output)
     if out_path.suffix.lower() != ".xlsx":
         out_path = out_path.with_suffix(".xlsx")
     write_xlsx(all_rows, str(out_path))
     print(f"Scritte {len(all_rows)} righe in {out_path}", file=sys.stderr)
+
+    if rescans:
+        print(f"\n{len(rescans)} fogli gia\' presenti, esclusi dall'output:", file=sys.stderr)
+        for line in format_rescans(rescans):
+            print(line, file=sys.stderr)
 
     dups = find_duplicates(all_rows)
     if dups:

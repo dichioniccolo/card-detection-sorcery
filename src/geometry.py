@@ -14,7 +14,8 @@ destra, una card per riga) e tutto il resto della pipeline non cambia.
 Metodo (validato su 6 fogli reali, vedi report Fase 1/2):
 - le linee della tabella prestampata sono l'elemento piu' stabile del foglio
 - le righe orizzontali si rilevano in modo pulito guardando SOLO la striscia
-  della colonna etichetta (sempre bianca, mai coperta dalla card incollata)
+  della colonna etichetta (sempre bianca, mai coperta dalla card incollata),
+  e cercandoci il tratto orizzontale continuo che solo una linea produce
 - le colonne verticali si rilevano guardando l'intera fascia verticale della
   tabella (bordo sx, divisore centrale, bordo dx)
 """
@@ -67,17 +68,48 @@ def _merge_close(lines, min_gap):
 # Parametri di rilevamento della griglia. I default valgono per le scansioni di
 # riferimento; il sweep permissivo (vedi locate_cells) li fa variare quando la
 # griglia non viene trovata al primo colpo.
-DARK_THRESH = 100
-# `row_frac` e' relativo: la soglia di copertura si calcola sul picco delle
-# righe di quel foglio, non su un valore assoluto. Le linee della griglia non
-# hanno tutte la stessa forza (stampa piu' chiara in fondo al foglio, toner
-# scarico, scansione slavata): con una soglia fissa le piu' deboli sparivano e
-# il foglio usciva con meno celle di quelle che ha, senza alcun errore.
-ROW_FRAC = 0.6
-# Copertura assoluta minima: senza, su un foglio senza griglia la soglia
-# relativa scenderebbe fino a promuovere il rumore a linea.
-MIN_ROW_COVERAGE = 0.35
-COL_FRAC = 0.3
+DARK_THRESH = 160
+# Lunghezza minima del tratto orizzontale continuo che fa di una riga di pixel
+# una linea di griglia, in frazione della larghezza della striscia.
+ROW_FRAC = 0.25
+# Le colonne si cercano sull'intera larghezza del foglio, card comprese. Una
+# card molto trattata e' quasi tutta scura: a distinguerla dalla linea non e'
+# quanto inchiostro c'e' in quella x, ma che la linea e' sottile, cioe' ha il
+# bianco a fianco. COL_THIN_PX e' la distanza a cui si controlla che il foglio
+# torni bianco: piu' larga del tratto della griglia, piu' stretta di una card.
+COL_THIN_PX = 30
+# Punteggio minimo perche' un picco valga come linea verticale: sotto, la
+# griglia non c'e'.
+COL_FRAC = 0.10
+# Distanza minima fra due linee verticali distinte.
+MIN_COL_GAP = 200
+
+# Righe di pixel vuote che separano due linee di griglia distinte. Una linea
+# storta si spalma su una decina di righe: vanno raccolte in una sola.
+LINE_ROW_GAP = 15
+
+
+def _has_long_run(strip: np.ndarray, min_run: int) -> np.ndarray:
+    """Per ogni riga di `strip` (booleano, True = inchiostro) dice se contiene
+    almeno `min_run` pixel di inchiostro consecutivi.
+
+    E' questo, non la quantita' di inchiostro, a distinguere una linea di
+    griglia dal testo dell'etichetta: la linea e' un tratto continuo che
+    attraversa tutta la colonna, il testo sono caratteri staccati. Contando
+    solo l'inchiostro, una riga di testo ne ha piu' di una linea sbiadita, e
+    abbassare la soglia per recuperare le linee deboli faceva promuovere il
+    testo a linea.
+    """
+    if min_run < 1:
+        min_run = 1
+    if strip.shape[1] < min_run:
+        return np.zeros(strip.shape[0], dtype=bool)
+    # somma su ogni finestra di `min_run` pixel: vale min_run solo se sono
+    # tutti inchiostro, cioe' se il tratto e' continuo
+    cs = np.cumsum(np.hstack([np.zeros((strip.shape[0], 1), dtype=np.int32),
+                              strip.astype(np.int32)]), axis=1)
+    windows = cs[:, min_run:] - cs[:, :-min_run]
+    return (windows == min_run).any(axis=1)
 
 
 def detect_grid(gray: np.ndarray, dark_thresh: int = DARK_THRESH,
@@ -90,32 +122,53 @@ def detect_grid(gray: np.ndarray, dark_thresh: int = DARK_THRESH,
     # colonna etichetta presunta nella meta' destra della pagina: usa una
     # finestra larga e permissiva, poi raffina una volta note le colonne.
     label_strip = dark[:, int(w * 0.55):int(w * 0.90)]
-    frac = label_strip.mean(axis=1)
-    row_thresh = max(MIN_ROW_COVERAGE, row_frac * float(frac.max()))
-    rows = _merge_close(_group(np.where(frac > row_thresh)[0]), MIN_CELL_PX)
+    is_line = _has_long_run(label_strip, int(row_frac * label_strip.shape[1]))
+    rows = _merge_close(_group(np.where(is_line)[0], gap=LINE_ROW_GAP), MIN_CELL_PX)
     if len(rows) < MIN_CELLS + 1:
         raise ValueError(
             f"Attese almeno {MIN_CELLS + 1} linee orizzontali, trovate {len(rows)}: {rows}")
 
-    top, bot = rows[0], rows[-1]
-    frac = dark[top:bot, :].mean(axis=0)
-    cols = _group(np.where(frac > col_frac)[0])
+    cols = _detect_cols(dark[rows[0]:rows[-1], :], col_frac)
     if len(cols) != 3:
         raise ValueError(f"Attese 3 linee verticali, trovate {len(cols)}: {cols}")
 
     return rows, cols
 
 
-# Sweep usato in modalita' permissiva: soglie piu' basse recuperano le griglie
-# stampate chiare o scansionate slavate, quelle piu' alte i fogli con sporco o
-# ombre che fanno trovare linee di troppo. `row` resta relativo al picco del
-# foglio. Il primo insieme di parametri che da' una griglia plausibile (almeno
-# due celle e 3 colonne) vince.
+def _detect_cols(band: np.ndarray, col_frac: float) -> list:
+    """Le 3 x delle linee verticali: bordo sinistro, divisore, bordo destro.
+
+    Le linee sono sempre e solo tre, quindi invece di tagliare a una soglia
+    (che su un foglio sbiadito ne perde una e su una card fitta di depositi ne
+    inventa dieci) si prendono i tre picchi piu' forti, tenuti distanti fra
+    loro.
+    """
+    left = np.zeros_like(band)
+    left[:, COL_THIN_PX:] = band[:, :-COL_THIN_PX]
+    right = np.zeros_like(band)
+    right[:, :-COL_THIN_PX] = band[:, COL_THIN_PX:]
+    score = (band & ~left & ~right).mean(axis=0)
+
+    cols = []
+    for _ in range(3):
+        x = int(score.argmax())
+        if score[x] < col_frac:
+            break
+        cols.append(x)
+        score[max(0, x - MIN_COL_GAP):x + MIN_COL_GAP] = 0
+    return sorted(cols)
+
+
+# Sweep usato in modalita' permissiva: un `dark` piu' alto e un `row` piu'
+# corto recuperano le griglie stampate chiare o scansionate slavate, i valori
+# opposti scartano lo sporco e le ombre che fanno trovare linee di troppo. Il
+# primo insieme di parametri che da' una griglia plausibile (almeno due celle e
+# 3 colonne) vince.
 _RELAXED_SWEEP = [
     (dark, row, col)
-    for dark in (100, 120, 140, 160, 80, 60)
-    for row in (0.6, 0.5, 0.4, 0.3, 0.7, 0.8)
-    for col in (0.3, 0.25, 0.2, 0.15, 0.4, 0.5)
+    for dark in (160, 190, 140, 120, 100, 210)
+    for row in (0.25, 0.18, 0.12, 0.35, 0.5)
+    for col in (0.10, 0.07, 0.05, 0.15, 0.20)
 ]
 
 

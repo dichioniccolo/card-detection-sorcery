@@ -25,7 +25,8 @@ except ImportError:  # senza tkinterdnd2 la GUI funziona, solo senza drag & drop
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from pipeline import find_duplicates, format_duplicates, write_xlsx  # noqa: E402
+from pipeline import (drop_rescanned_sheets, find_duplicates,  # noqa: E402
+                      format_duplicates, format_rescans, write_xlsx)
 from worker import process_one  # noqa: E402
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
@@ -529,6 +530,9 @@ class App:
 
             # ordine di output stabile: come in lista, non come finiscono
             all_rows = [r for p in image_paths for r in results.get(p, [])]
+            # lo stesso foglio scansionato due volte darebbe righe doppie: si
+            # tiene la prima scansione e si dice quale file resta fuori
+            all_rows, rescans = drop_rescanned_sheets(all_rows)
             if not all_rows:
                 raise RuntimeError("Nessuna card elaborata: controlla i file di input.")
 
@@ -538,6 +542,8 @@ class App:
             dups = find_duplicates(all_rows)
 
             summary = [f"Scritte {len(all_rows)} righe in {out_path}"]
+            if rescans:
+                summary.append(f"{len(rescans)} fogli gia' presenti, esclusi (elenco nel log)")
             if dups:
                 summary.append(f"{len(dups)} etichette duplicate (elenco nel log)")
             if bad_labels:
@@ -547,6 +553,12 @@ class App:
             if failed:
                 summary.append(f"{len(failed)} fogli saltati (elenco nel log)")
             self._log("Fatto. " + " | ".join(summary))
+            if rescans:
+                # stesso foglio due volte nella cartella di input: non e' un
+                # errore di lettura, e' una riscansione o un file copiato
+                self._log(f"\n{len(rescans)} fogli gia' presenti, esclusi dall'output:")
+                for line in format_rescans(rescans):
+                    self._log(line)
             if dups:
                 # stessa etichetta due volte nello stesso output: una delle due
                 # card e' stata scansionata o etichettata male, va controllata

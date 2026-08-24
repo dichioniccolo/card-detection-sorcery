@@ -173,6 +173,98 @@ def find_duplicates(rows: list):
     return [(k, v) for k, v in groups.items() if len(v) > 1]
 
 
+# Scarto relativo entro cui due misure sono la stessa card riscansionata. Due
+# scansioni dello stesso foglio danno conteggi quasi identici (2-3% di scarto,
+# dovuto al rumore della scansione); due fogli diversi che portano la stessa
+# etichetta - prove distinte che riusano lo stesso schema - differiscono molto
+# di piu'.
+RESCAN_TOLERANCE = 0.10
+
+
+def drop_rescanned_sheets(rows: list):
+    """Toglie i fogli scansionati piu' volte, tenendo la prima scansione.
+
+    Un foglio e' una riscansione di un altro se porta le stesse etichette E
+    misura le stesse cose. Le sole etichette non bastano: prove diverse
+    riusano lo stesso schema di identificativi, quindi due fogli di prove
+    diverse possono avere le stesse etichette pur essendo card diverse. Le
+    sole misure non bastano nemmeno: due card poco trattate si somigliano.
+
+    Ritorna (righe_tenute, [(file_scartato, file_tenuto), ...]).
+    """
+    by_file = {}
+    for row in rows:
+        by_file.setdefault(row["source_file"], []).append(row)
+
+    kept, dropped = {}, []
+    for path, sheet_rows in by_file.items():
+        key = _sheet_key(sheet_rows)
+        if key is None:
+            continue
+        twin = next((other for other, other_rows in kept.get(key, [])
+                     if _same_measurements(sheet_rows, other_rows)), None)
+        if twin is not None:
+            dropped.append((path, twin))
+            continue
+        kept.setdefault(key, []).append((path, sheet_rows))
+
+    skipped = {path for path, _kept in dropped}
+    return [r for r in rows if r["source_file"] not in skipped], dropped
+
+
+def _sheet_key(sheet_rows: list):
+    """Insieme delle etichette del foglio, o None se non e' confrontabile.
+
+    Un foglio con anche una sola etichetta illeggibile non ha una chiave: non
+    si puo' dire se ripete un altro foglio, quindi resta nell'output.
+    """
+    labels = []
+    for row in sheet_rows:
+        values = [row.get(f) for f in DUP_KEY_FIELDS]
+        if not row.get("label_ok") or any(v in (None, "") for v in values):
+            return None
+        labels.append(tuple(values))
+    if not labels:
+        return None
+    return tuple(sorted(labels))
+
+
+# Misure confrontate per decidere se due fogli sono lo stesso foglio: il
+# numero di depositi contati e la percentuale di superficie coperta.
+RESCAN_METRICS = ["TOTAL DEPOSIT", "COVERAGE"]
+
+
+def _same_measurements(sheet_rows: list, other_rows: list) -> bool:
+    """Vero se card per card i due fogli misurano le stesse cose."""
+    other_by_label = {tuple(r.get(f) for f in DUP_KEY_FIELDS): r for r in other_rows}
+    for row in sheet_rows:
+        other = other_by_label.get(tuple(row.get(f) for f in DUP_KEY_FIELDS))
+        if other is None:
+            return False
+        for field in RESCAN_METRICS:
+            if not _close(row.get(field), other.get(field)):
+                return False
+    return True
+
+
+def _close(a, b) -> bool:
+    """Confronto relativo fra due misure, gestendo le celle senza misura."""
+    if a in (None, "") or b in (None, ""):
+        # card assente o non elaborata: confrontabile solo con un'altra uguale
+        return a in (None, "") and b in (None, "")
+    scale = max(abs(float(a)), abs(float(b)))
+    if scale == 0:
+        return True
+    return abs(float(a) - float(b)) / scale <= RESCAN_TOLERANCE
+
+
+def format_rescans(dropped: list) -> list:
+    """Righe di testo pronte per il log/console."""
+    return [f"  {path}\n      stesse etichette e stesse misure di {kept}, "
+            "scansione ripetuta"
+            for path, kept in dropped]
+
+
 def format_duplicates(dups: list) -> list:
     """Righe di testo pronte per il log/console."""
     lines = []

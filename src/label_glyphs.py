@@ -13,6 +13,9 @@ MIN_GLYPH_INK = 40       # pixel di inchiostro minimi per un carattere
 COLUMN_GAP = 8           # colonne vuote che separano due caratteri
 ROW_GAP = 3              # righe vuote che separano due fasce orizzontali
 SPECK_INK_FRAC = 0.05    # inchiostro minimo di una fascia, sul massimo
+LINE_HEIGHT_FRAC = 0.5   # altezza, sul ritaglio, oltre cui e' una linea
+MAX_HEIGHT_RATIO = 2.0   # altezza, sulla mediana, oltre cui non e' un carattere
+MIN_GLYPH_FILL = 0.15    # inchiostro minimo dentro il riquadro del glifo
 
 
 def _drop_specks(ink: np.ndarray) -> np.ndarray:
@@ -46,10 +49,28 @@ def _drop_specks(ink: np.ndarray) -> np.ndarray:
     return out
 
 
+def _drop_grid_lines(ink: np.ndarray) -> np.ndarray:
+    """Azzera le colonne occupate da una linea della griglia.
+
+    Su un foglio storto la linea verticale della tabella sconfina nel ritaglio
+    dell'etichetta. Segmentata insieme al testo diventa un carattere in piu' in
+    testa alla riga (e sposta di uno tutte le posizioni del prefisso), oppure
+    si attacca alla prima lettera e la rende irriconoscibile. La linea si
+    distingue dal testo perche' e' alta quanto tutto il ritaglio, mentre un
+    carattere ne occupa un decimo.
+    """
+    tall = ink.sum(axis=0) > LINE_HEIGHT_FRAC * ink.shape[0]
+    if not tall.any():
+        return ink
+    out = ink.copy()
+    out[:, tall] = False
+    return out
+
+
 def segment_glyphs(gray: np.ndarray) -> list:
     """Da un ritaglio dell'etichetta ritorna la lista dei glifi (array bool),
     da sinistra a destra."""
-    ink = _drop_specks(gray < INK_THRESHOLD)
+    ink = _drop_specks(_drop_grid_lines(gray < INK_THRESHOLD))
     cols = np.where(ink.any(axis=0))[0]
     if len(cols) == 0:
         return []
@@ -63,7 +84,7 @@ def segment_glyphs(gray: np.ndarray) -> list:
         prev = x
     spans.append((start, prev))
 
-    glyphs = []
+    boxes = []
     for x0, x1 in spans:
         if x1 - x0 + 1 < MIN_GLYPH_WIDTH:
             continue
@@ -71,8 +92,40 @@ def segment_glyphs(gray: np.ndarray) -> list:
         if sub.sum() < MIN_GLYPH_INK:
             continue
         rows = np.where(sub.any(axis=1))[0]
-        glyphs.append(sub[rows.min():rows.max() + 1, :])
-    return glyphs
+        boxes.append((x0, x1, int(rows.min()), int(rows.max())))
+
+    glyphs = [ink[top:bot + 1, x0:x1 + 1] for x0, x1, top, bot in _clip_tall(boxes)]
+    # un carattere riempie da un terzo a meta' del suo riquadro; quel che resta
+    # di una linea tagliata alla fascia del testo e' un tratto sottile e vuoto
+    return [g for g in glyphs if g.mean() >= MIN_GLYPH_FILL]
+
+
+def _clip_tall(boxes: list) -> list:
+    """Riporta alla fascia del testo i glifi che ne escono in altezza.
+
+    Il testo e' monospace e tutti i caratteri hanno la stessa altezza: quello
+    che ne e' alto il doppio ha preso dentro qualcos'altro, di solito la linea
+    della griglia di un foglio storto, che attraversa il ritaglio in diagonale
+    e quindi sfugge a `_drop_grid_lines`. Il glifo si taglia alla fascia in cui
+    stanno tutti gli altri invece di scartarlo: sotto la linea c'e' un
+    carattere vero, e buttarlo via sposterebbe di uno tutte le posizioni del
+    prefisso, facendo uscire un'etichetta sbagliata ma plausibile.
+    """
+    if len(boxes) < 2:
+        return boxes
+    heights = [bot - top + 1 for _x0, _x1, top, bot in boxes]
+    limit = MAX_HEIGHT_RATIO * float(np.median(heights))
+    band_top = int(np.median([top for _x0, _x1, top, _bot in boxes]))
+    band_bot = int(np.median([bot for _x0, _x1, _top, bot in boxes]))
+
+    out = []
+    for x0, x1, top, bot in boxes:
+        if bot - top + 1 > limit:
+            top, bot = max(top, band_top), min(bot, band_bot)
+            if bot <= top:
+                continue
+        out.append((x0, x1, top, bot))
+    return out
 
 
 def normalize_glyph(glyph: np.ndarray) -> np.ndarray:
