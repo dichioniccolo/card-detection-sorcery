@@ -29,7 +29,7 @@ from pathlib import Path
 
 from version import APP_VERSION
 
-REPO = "dichioniccolo/depositscan-replica"
+REPO = "dichioniccolo/card-detection-sorcery"
 LATEST_RELEASE_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 
