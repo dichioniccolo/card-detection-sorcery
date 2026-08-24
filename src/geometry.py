@@ -68,7 +68,15 @@ def _merge_close(lines, min_gap):
 # riferimento; il sweep permissivo (vedi locate_cells) li fa variare quando la
 # griglia non viene trovata al primo colpo.
 DARK_THRESH = 100
+# `row_frac` e' relativo: la soglia di copertura si calcola sul picco delle
+# righe di quel foglio, non su un valore assoluto. Le linee della griglia non
+# hanno tutte la stessa forza (stampa piu' chiara in fondo al foglio, toner
+# scarico, scansione slavata): con una soglia fissa le piu' deboli sparivano e
+# il foglio usciva con meno celle di quelle che ha, senza alcun errore.
 ROW_FRAC = 0.6
+# Copertura assoluta minima: senza, su un foglio senza griglia la soglia
+# relativa scenderebbe fino a promuovere il rumore a linea.
+MIN_ROW_COVERAGE = 0.35
 COL_FRAC = 0.3
 
 
@@ -83,7 +91,8 @@ def detect_grid(gray: np.ndarray, dark_thresh: int = DARK_THRESH,
     # finestra larga e permissiva, poi raffina una volta note le colonne.
     label_strip = dark[:, int(w * 0.55):int(w * 0.90)]
     frac = label_strip.mean(axis=1)
-    rows = _merge_close(_group(np.where(frac > row_frac)[0]), MIN_CELL_PX)
+    row_thresh = max(MIN_ROW_COVERAGE, row_frac * float(frac.max()))
+    rows = _merge_close(_group(np.where(frac > row_thresh)[0]), MIN_CELL_PX)
     if len(rows) < MIN_CELLS + 1:
         raise ValueError(
             f"Attese almeno {MIN_CELLS + 1} linee orizzontali, trovate {len(rows)}: {rows}")
@@ -99,8 +108,9 @@ def detect_grid(gray: np.ndarray, dark_thresh: int = DARK_THRESH,
 
 # Sweep usato in modalita' permissiva: soglie piu' basse recuperano le griglie
 # stampate chiare o scansionate slavate, quelle piu' alte i fogli con sporco o
-# ombre che fanno trovare linee di troppo. Il primo insieme di parametri che da'
-# una griglia plausibile (almeno due celle e 3 colonne) vince.
+# ombre che fanno trovare linee di troppo. `row` resta relativo al picco del
+# foglio. Il primo insieme di parametri che da' una griglia plausibile (almeno
+# due celle e 3 colonne) vince.
 _RELAXED_SWEEP = [
     (dark, row, col)
     for dark in (100, 120, 140, 160, 80, 60)
