@@ -128,7 +128,12 @@ git tag v1.2.0 && git push origin v1.2.0
 ## Stato di validazione
 
 Riferimento: 24 card reali con risultati DepositScan noti. Le due card
-degradate di `PROVA_A_0030` sono escluse dalle statistiche (vedi sotto).
+degradate di `PROVA_A_0030` sono escluse dalle statistiche: un gradiente di
+illuminazione fa scendere lo sfondo sotto la soglia di 127 e gonfia il
+Coverage. Il software le marca da solo `SFONDO_SOTTO_SOGLIA` nella colonna
+`quality_flag` (soglie `MAX_COMPONENT_FRAC`, `MIN_BACKGROUND_GRAY` in
+`src/deposit_metrics.py`); i due valori diagnostici finiscono nell'output.
+Nessuna correzione viene applicata ai dati: quelle scansioni vanno rifatte.
 
 | Metrica | Bias | MAE |
 |---|---|---|
@@ -202,34 +207,6 @@ riferimento (1-4). Un'etichetta che contenga 0 o 5-9 verrebbe ricondotta alla
 cifra piu' somigliante fra quelle note, senza segnalazione. Per estendere:
 aggiungere a `tools/build_label_templates.py` un foglio che contenga le cifre
 mancanti e rigenerare il file dei template.
-
-## Punto aperto: scansioni degradate
-
-Due card di `PROVA_A_0030` (`H3 V DW A`, `H4 V DW A`) hanno un gradiente di
-illuminazione: lo sfondo giallo scende sotto 127 e viene contato come
-deposito, gonfiando il Coverage (38 contro 15 e 8.5 attesi). Il conteggio dei
-depositi resta invece attendibile.
-
-Il software le rileva da solo e le marca `SFONDO_SOTTO_SOGLIA` nella colonna
-`quality_flag`. Servono **due** condizioni insieme:
-
-1. `largest_component_frac > 0.10`: un singolo oggetto occupa piu' del 10%
-   della ROI (degradate 26.2-28.2%, la piu' alta tra le valide 4.5%);
-2. `background_floor_gray < 143`: il livello della carta nella zona peggio
-   illuminata scende verso la soglia di 127 (degradate 136-138, la piu' bassa
-   tra le valide 147). Si misura come 5° percentile dei massimi su blocchi di
-   64 px: il massimo locale e' la carta, il percentile ignora i blocchi
-   interamente coperti dal deposito.
-
-La prima condizione da sola non basta: su card molto bagnate le gocce si
-fondono in una macchia unica legittima. `H2P1R1MUPA` ha il 41% di copertura ed
-e' valida. Entrambi i valori finiscono nell'output, cosi' si vede sempre perche' il
-flag e' scattato — e se scatta troppo spesso, quale delle due condizioni
-regolare (`MAX_COMPONENT_FRAC`, `MIN_BACKGROUND_GRAY` in
-`src/deposit_metrics.py`).
-
-Non e' stata applicata alcuna correzione ai dati: le scansioni degradate vanno
-rifatte.
 
 ## Nota sui metadati
 
