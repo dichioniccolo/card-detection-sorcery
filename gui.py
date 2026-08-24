@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from pipeline import (drop_rescanned_sheets, find_duplicates,  # noqa: E402
                       format_duplicates, format_rescans, write_xlsx)
 from worker import process_one  # noqa: E402
+import updater  # noqa: E402
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
 
@@ -55,7 +56,8 @@ PAD = 12              # passo di spaziatura, usato ovunque
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("Cards Detection Sorcery - esportazione Excel")
+        root.title(f"Cards Detection Sorcery {updater.current_version()} "
+                   "- esportazione Excel")
         root.geometry("1000x800")
         root.minsize(880, 700)
         root.configure(background=BG)
@@ -68,14 +70,18 @@ class App:
         self.force = BooleanVar(value=False)
         self.status = StringVar(value="Pronto.")
         self.count_label = StringVar(value="Nessuna immagine in lista")
+        self.update_label = StringVar(value=f"Versione {updater.current_version()}")
         self.log_queue = queue.Queue()
         self.last_output = None
         self.running = False
+        self.pending_update = None
 
         self._init_style()
         self._build_layout()
         self._refresh_placeholder()
         self._poll_log_queue()
+        updater.cleanup_previous()
+        self.check_for_update(announce_when_current=False)
 
     # ------------------------------------------------------------------ stile
 
@@ -270,6 +276,118 @@ class App:
         status = ttk.Frame(self.root)
         status.grid(row=row + 1, column=0, sticky=E + W, padx=PAD, pady=(6, PAD))
         ttk.Label(status, textvariable=self.status, style="Status.TLabel").pack(side=LEFT)
+
+        # il pulsante compare solo quando c'e' davvero una versione nuova:
+        # finche' l'applicazione e' aggiornata non c'e' niente da dire
+        self.update_button = ttk.Button(status, text="Aggiorna",
+                                        style="Accent.TButton",
+                                        command=self.install_update)
+        ttk.Label(status, textvariable=self.update_label,
+                  style="Muted.TLabel").pack(side=RIGHT, padx=(0, 8))
+        ttk.Button(status, text="Controlla aggiornamenti",
+                   command=lambda: self.check_for_update(announce_when_current=True)
+                   ).pack(side=RIGHT, padx=(0, 8))
+
+    # ------------------------------------------------------- aggiornamenti
+
+    def check_for_update(self, announce_when_current: bool):
+        """Chiede a GitHub se c'e' una versione piu' recente.
+
+        Gira su un thread: la rete puo' non rispondere e la finestra non deve
+        restare bloccata ad aspettarla. All'avvio un errore di rete si tace
+        (il piu' delle volte e' un computer senza internet, non un guasto);
+        se il controllo l'ha chiesto l'utente si dice com'e' andata.
+        """
+        self.update_label.set("Controllo aggiornamenti...")
+        threading.Thread(target=self._check_worker, args=(announce_when_current,),
+                         daemon=True).start()
+
+    def _check_worker(self, announce_when_current: bool):
+        try:
+            release = updater.check_for_update()
+        except Exception as e:
+            self.root.after(0, self._update_check_failed, announce_when_current, str(e))
+            return
+        self.root.after(0, self._update_check_done, announce_when_current, release)
+
+    def _update_check_failed(self, announce: bool, error: str):
+        self.update_label.set(f"Versione {updater.current_version()}")
+        if announce:
+            self._log(f"Controllo aggiornamenti non riuscito: {error}")
+            messagebox.showwarning(
+                "Aggiornamenti",
+                "Non e' stato possibile contattare GitHub.\n\n" + error)
+
+    def _update_check_done(self, announce: bool, release):
+        if release is None:
+            self.update_label.set(f"Versione {updater.current_version()} (aggiornata)")
+            if announce:
+                messagebox.showinfo(
+                    "Aggiornamenti",
+                    f"Stai gia' usando l'ultima versione ({updater.current_version()}).")
+            return
+
+        self.pending_update = release
+        self.update_label.set(f"Disponibile la versione {release.version}")
+        self.update_button.pack(side=RIGHT)
+        self._log(f"Disponibile la versione {release.version} "
+                  f"(in uso: {updater.current_version()}).")
+        if not updater.is_frozen():
+            # dai sorgenti non c'e' un eseguibile da sostituire
+            self.update_button.config(state="disabled")
+
+    def install_update(self):
+        """Scarica e installa la versione nuova, poi riavvia l'applicazione."""
+        release = self.pending_update
+        if release is None or self.running:
+            return
+        if not updater.is_frozen():
+            messagebox.showinfo(
+                "Aggiornamenti",
+                "Stai eseguendo il programma dai sorgenti: aggiorna con git.\n\n"
+                f"Ultima versione pubblicata: {release.version}")
+            return
+        size = f" ({release.size / 1_000_000:.0f} MB)" if release.size else ""
+        if not messagebox.askyesno(
+                "Aggiornamento",
+                f"Scaricare e installare la versione {release.version}{size}?\n\n"
+                "L'applicazione si riavvia da sola al termine."):
+            return
+
+        self.update_button.config(state="disabled")
+        self.run_button.config(state="disabled")
+        threading.Thread(target=self._install_worker, args=(release,),
+                         daemon=True).start()
+
+    def _install_worker(self, release):
+        try:
+            self._log(f"Scarico la versione {release.version}...")
+            path = updater.download(release, progress=self._download_progress)
+            self._log("Scaricata, sostituisco l'eseguibile.")
+            updater.apply_update(path)
+        except Exception as e:
+            self._log(f"Aggiornamento non riuscito: {e}")
+            self.root.after(0, self._install_failed, str(e))
+            return
+        # l'istanza nuova e' gia' partita: questa deve togliersi di mezzo,
+        # altrimenti restano due finestre aperte sullo stesso lavoro
+        self.root.after(0, self.root.destroy)
+
+    def _download_progress(self, done: int, total: int):
+        if not total:
+            return
+        self.root.after(0, self.update_label.set,
+                        f"Scaricamento {done * 100 // total}%")
+
+    def _install_failed(self, error: str):
+        self.update_label.set(f"Versione {updater.current_version()}")
+        self.update_button.config(state="normal")
+        self.run_button.config(state="normal")
+        messagebox.showerror(
+            "Aggiornamento",
+            "Aggiornamento non riuscito, l'applicazione resta alla versione "
+            f"attuale.\n\n{error}\n\nPuoi scaricare il file a mano da:\n"
+            f"{updater.RELEASES_PAGE}")
 
     def _build_log_card(self, parent):
         card = ttk.Frame(parent, style="Card.TFrame", padding=PAD)

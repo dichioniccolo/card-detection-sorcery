@@ -83,6 +83,33 @@ Su Windows, con Python installato, `build_windows.bat` produce
 `dist\CardsDetectionSorcery.exe`: file singolo, avvia la GUI, condivisibile
 com'e'.
 
+### Aggiornamento automatico
+
+L'eseguibile si aggiorna da solo dalle release di GitHub, cosi' non serve
+riscaricarlo a mano a ogni correzione.
+
+- a ogni avvio l'applicazione chiede a GitHub qual e' l'ultima release
+  **stabile** (le build automatiche di ogni push su `main` sono prerelease e
+  non vengono mai proposte); se il computer e' offline non dice niente;
+- quando c'e' una versione nuova, in basso a destra compare il pulsante
+  *Aggiorna*: scarica il nuovo `.exe`, ne verifica dimensione e checksum,
+  sostituisce quello in uso e riavvia l'applicazione;
+- la versione precedente resta accanto come `.exe.old` e viene cancellata al
+  primo avvio successivo. Se qualcosa va storto a meta', quella vecchia torna
+  al suo posto: l'applicazione resta comunque avviabile;
+- il pulsante *Controlla aggiornamenti* fa lo stesso controllo su richiesta.
+
+La versione in esecuzione e' nel titolo della finestra. Viene scritta in
+`src/version.py` dalla build (`Stamp version` nel workflow) a partire dal tag:
+dai sorgenti vale `sviluppo`, e in quel caso l'aggiornamento si annuncia ma
+non si applica (non c'e' un eseguibile da sostituire, si aggiorna con `git`).
+
+Per pubblicare una versione nuova agli utenti basta un tag:
+
+```bash
+git tag v1.2.0 && git push origin v1.2.0
+```
+
 ## Pipeline
 
 1. rilevamento della griglia prestampata (linee della tabella)

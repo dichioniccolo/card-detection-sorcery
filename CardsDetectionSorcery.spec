@@ -16,7 +16,7 @@ a = Analysis(
     datas=[('src/label_templates.npz', '.')],
     hiddenimports=[
         'pipeline', 'worker', 'geometry', 'card_mask', 'label_ocr',
-        'label_glyphs', 'deposit_metrics',
+        'label_glyphs', 'deposit_metrics', 'updater', 'version',
         'openpyxl',
         'scipy._lib.array_api_compat.numpy.fft',
         'scipy.special._cdflib',

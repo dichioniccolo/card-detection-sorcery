@@ -38,6 +38,15 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "artifact=CardsDetectionSorcery-$version.exe" >> "$GITHUB_OUTPUT"
 
+      # La versione finisce dentro l'eseguibile: e' quella che l'applicazione
+      # confronta con l'ultima release per sapere se deve aggiornarsi.
+      - name: Stamp version
+        shell: bash
+        run: |
+          printf 'APP_VERSION = "%s"\n' "${{ steps.version.outputs.version }}" > src/version_stamp.py
+          cat src/version_stamp.py
+          mv src/version_stamp.py src/version.py
+
       - name: Build
         run: pyinstaller --clean --noconfirm CardsDetectionSorcery.spec
 
