@@ -34,18 +34,37 @@ TRUTH = {
         "H1P1R1MUPCNV", "H1P1R1MDWCNV", "H2P1R1MUPCNV",
         "H2P1R1MDWCNV", "H3P1R1MUPCNV", "H3P1R1MDWCNV",
     ],
+    # foglio "senza height/plant": etichette N/S/O/E <distanza> A, niente
+    # prefisso H/P/R. Introduce le cifre 0 e 5 e le lettere S/O/E, assenti
+    # dai fogli di riferimento precedenti.
+    "senza-height-plant/DER_A014390_0001.jpg": [
+        "N3A", "N5A", "N10A", "S3A", "S5A", "S10A",
+    ],
+    "senza-height-plant/DER_A014390_0002.jpg": [
+        "O3A", "O5A", "O10A", "E3A", "E5A", "E10A",
+    ],
 }
+
+
+def _load_existing():
+    """Template gia' costruiti, usati come fallback per i fogli sorgente non
+    piu' presenti in locale: senza, rigenerare perderebbe i loro caratteri."""
+    path = ROOT / "src" / "label_templates.npz"
+    if not path.exists():
+        return {}
+    data = np.load(path)
+    return {c: t for c, t in zip(data["chars"], data["templates"])}
 
 
 def main():
     samples = {}
     for fname, labels in TRUTH.items():
-        path = ROOT / "assets" / "A" / fname
+        path = ROOT / "assets" / fname if "/" in fname else ROOT / "assets" / "A" / fname
         if not path.exists():
             print(f"manca {path}, salto", file=sys.stderr)
             continue
         image = load_sheet(str(path))
-        image, cells, _note = locate_cells(image)
+        image, cells, _note = locate_cells(image, relaxed=True)
         for cell, text in zip(cells, labels):
             crop = np.array(image.crop(cell.label_box).convert("L"))
             glyphs = segment_glyphs(crop)
@@ -59,13 +78,18 @@ def main():
     if not samples:
         sys.exit("nessun campione raccolto")
 
-    chars = sorted(samples)
-    templates = np.stack([np.mean(samples[c], axis=0) for c in chars])
+    existing = _load_existing()
+    chars = sorted(set(samples) | set(existing))
+    templates = np.stack([
+        np.mean(samples[c], axis=0) if c in samples else existing[c]
+        for c in chars
+    ])
     out = ROOT / "src" / "label_templates.npz"
     np.savez_compressed(out, chars=np.array(chars), templates=templates)
 
     for c in chars:
-        print(f"  {c!r}: {len(samples[c])} campioni")
+        n = len(samples[c]) if c in samples else 0
+        print(f"  {c!r}: {n} campioni nuovi" + ("" if n else " (da template esistente)"))
     print(f"scritto {out}")
 
 
