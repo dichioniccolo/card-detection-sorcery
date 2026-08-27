@@ -105,9 +105,15 @@ def _has_long_run(strip: np.ndarray, min_run: int) -> np.ndarray:
     if strip.shape[1] < min_run:
         return np.zeros(strip.shape[0], dtype=bool)
     # somma su ogni finestra di `min_run` pixel: vale min_run solo se sono
-    # tutti inchiostro, cioe' se il tratto e' continuo
-    cs = np.cumsum(np.hstack([np.zeros((strip.shape[0], 1), dtype=np.int32),
-                              strip.astype(np.int32)]), axis=1)
+    # tutti inchiostro, cioe' se il tratto e' continuo.
+    # uint16 basta (il conteggio massimo e' la larghezza della striscia, mai
+    # oltre qualche migliaio di pixel) ed e' un quarto della memoria di
+    # int64: la ricerca permissiva della griglia chiama questa funzione fino
+    # a 150 volte su fogli a piena risoluzione, e con piu' processi in
+    # parallelo un int64 qui basta a esaurire la RAM su macchine modeste
+    # (MemoryError osservato su fogli scansionati storti/sbiaditi).
+    cs = np.cumsum(np.hstack([np.zeros((strip.shape[0], 1), dtype=np.uint16),
+                              strip.astype(np.uint16)]), axis=1)
     windows = cs[:, min_run:] - cs[:, :-min_run]
     return (windows == min_run).any(axis=1)
 
@@ -189,18 +195,28 @@ def detect_grid_relaxed(gray: np.ndarray):
     )
 
 
+LABEL_LEFT_MARGIN = 50
+
+
 def build_cells(rows, cols, margin: int = 8) -> list:
     """Da n righe + 3 colonne costruisce le n-1 celle (card_box, label_box).
 
     margin: pixel di inset rispetto alle linee di griglia, per non includere
     il bordo nero della tabella nei ritagli.
+
+    Il bordo sinistro dell'etichetta usa un inset maggiore (LABEL_LEFT_MARGIN):
+    su un foglio storto o con la carta ondulata il divisore verticale non e'
+    perfettamente dritto per tutta la riga, e con `margin` sconfina nel
+    ritaglio come un tratto diagonale che il resto della pipeline puo'
+    scambiare per un carattere (es. un'etichetta letta con un "1" o una
+    lettera in piu' non stampati).
     """
     left, mid, right = cols
     cells = []
     for i in range(len(rows) - 1):
         y0, y1 = rows[i], rows[i + 1]
         card_box = (left + margin, y0 + margin, mid - margin, y1 - margin)
-        label_box = (mid + margin, y0 + margin, right - margin, y1 - margin)
+        label_box = (mid + LABEL_LEFT_MARGIN, y0 + margin, right - margin, y1 - margin)
         cells.append(Cell(row_index=i, card_box=card_box, label_box=label_box))
     return cells
 

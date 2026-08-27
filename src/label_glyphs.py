@@ -9,6 +9,7 @@ import numpy as np
 GLYPH_SIZE = 32          # lato del glifo normalizzato
 INK_THRESHOLD = 128      # sotto questo livello di grigio e' inchiostro
 MIN_GLYPH_WIDTH = 12     # scarta le macchioline di rumore
+MIN_GLYPH_HEIGHT = 12    # scarta i frammenti orizzontali di una linea di griglia
 MIN_GLYPH_INK = 40       # pixel di inchiostro minimi per un carattere
 COLUMN_GAP = 8           # colonne vuote che separano due caratteri
 ROW_GAP = 3              # righe vuote che separano due fasce orizzontali
@@ -92,7 +93,13 @@ def segment_glyphs(gray: np.ndarray) -> list:
         if sub.sum() < MIN_GLYPH_INK:
             continue
         rows = np.where(sub.any(axis=1))[0]
-        boxes.append((x0, x1, int(rows.min()), int(rows.max())))
+        top, bot = int(rows.min()), int(rows.max())
+        # un frammento di linea orizzontale (bordo della cella che sconfina
+        # nel ritaglio) e' largo ma alto una manciata di pixel: nessun
+        # carattere reale e' cosi' schiacciato
+        if bot - top + 1 < MIN_GLYPH_HEIGHT:
+            continue
+        boxes.append((x0, x1, top, bot))
 
     glyphs = [ink[top:bot + 1, x0:x1 + 1] for x0, x1, top, bot in _clip_tall(boxes)]
     # un carattere riempie da un terzo a meta' del suo riquadro; quel che resta
